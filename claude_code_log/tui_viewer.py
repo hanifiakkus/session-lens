@@ -23,10 +23,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, cast
 
-from rich.console import Group, RenderableType
-from rich.markdown import Markdown
+from rich import box
+from rich._loop import loop_first
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
+from rich.markdown import (
+    CodeBlock,
+    Heading,
+    ListItem,
+    Markdown,
+    MarkdownElement,
+    TableElement,
+)
+from rich.segment import Segment
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
+from rich.theme import Theme
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
@@ -550,6 +562,8 @@ class Palette:
     bash_mark: str = "rgb(253,93,177)"
     diff_added: str = "on rgb(34,92,43)"
     diff_removed: str = "on rgb(122,41,54)"
+    #: Claude Code's ``permission`` colour, which it gives inline code.
+    permission: str = "rgb(177,185,249)"
     current: str = "yellow"
 
 
@@ -587,11 +601,150 @@ def _text(text: str, terms: tuple[str, ...], style: str = "") -> Text:
     return out
 
 
+class _Heading(Heading):
+    """Left-aligned and unboxed, as Claude Code prints a heading.
+
+    Rich centres headings (and boxes ``#`` in Rich 14), differently in
+    each release, so the drawing is ours rather than Rich's.
+    """
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        text = self.text.copy()
+        text.justify = "left"
+        yield text
+
+
+class _Table(TableElement):
+    """A table with every border drawn, cells wrapped to fit the width.
+
+    Rich draws only a rule under the header (Rich 15 not even that, on a
+    dark background), so a wide table read as loose columns.
+    """
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        table = Table(
+            box=box.SQUARE,
+            show_lines=True,
+            border_style="markdown.table.border",
+            header_style="markdown.table.header",
+        )
+        if self.header is not None and self.header.row is not None:
+            for cell in self.header.row.cells:
+                table.add_column(cell.content, justify=cell.content.justify or "left")
+        if self.body is not None:
+            for row in self.body.rows:
+                table.add_row(*(cell.content for cell in row.cells))
+        yield table
+
+
+class _ListItem(ListItem):
+    """``-`` and ``1.`` markers, as Claude Code writes them."""
+
+    def _marked(
+        self, console: Console, options: ConsoleOptions, marker: str, style: str
+    ) -> RenderResult:
+        width = len(marker)
+        lines = console.render_lines(
+            self.elements,
+            options.update(width=options.max_width - width),
+            style=self.style,
+        )
+        marker_style = console.get_style(style, default="none")
+        padding = Segment(" " * width, marker_style)
+        for first, line in loop_first(lines):
+            yield Segment(marker, marker_style) if first else padding
+            yield from line
+            yield Segment("\n")
+
+    def render_bullet(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        return self._marked(console, options, "- ", "markdown.item.bullet")
+
+    def render_number(
+        self, console: Console, options: ConsoleOptions, number: int, last_number: int
+    ) -> RenderResult:
+        marker = f"{number}.".rjust(len(str(last_number)) + 1) + " "
+        return self._marked(console, options, marker, "markdown.item.number")
+
+
+class _CodeBlock(CodeBlock):
+    """Highlighted on the terminal's own background, without padding."""
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        code = str(self.text).rstrip()
+        if self.lexer_name in ("", "text"):
+            # Claude Code gives a fence without a language its code colour.
+            yield Text(code, style="markdown.code")
+            return
+        yield Syntax(
+            code,
+            self.lexer_name,
+            theme=self.theme,
+            background_color="default",
+            word_wrap=True,
+        )
+
+
+class _Markdown(Markdown):
+    """Rich's Markdown with Claude Code's headings, tables, lists and code."""
+
+    elements: ClassVar[dict[str, type[MarkdownElement]]] = {
+        **Markdown.elements,
+        "heading_open": _Heading,
+        "table_open": _Table,
+        "list_item_open": _ListItem,
+        "fence": _CodeBlock,
+        "code_block": _CodeBlock,
+    }
+
+
+def markdown_theme(palette: Palette) -> Theme:
+    """Every ``markdown.*`` style the viewer draws, set to Claude Code's.
+
+    Rich's defaults differ by release (Rich 15 paints ``##``–``####``
+    magenta, inline code cyan on black, bullets yellow), and Claude Code
+    keeps prose in its text colour: bold, italic and underline only, with
+    inline code in its ``permission`` colour.
+    """
+    plain = "none"
+    styles = {
+        "markdown.paragraph": plain,
+        "markdown.text": plain,
+        "markdown.em": "italic",
+        "markdown.emph": "italic",
+        "markdown.strong": "bold",
+        "markdown.s": "strike",
+        "markdown.code": palette.permission,
+        "markdown.code_block": plain,
+        "markdown.block_quote": f"{palette.inactive} italic",
+        "markdown.list": plain,
+        "markdown.item": plain,
+        "markdown.item.bullet": plain,
+        "markdown.item.number": plain,
+        "markdown.hr": palette.inactive,
+        "markdown.h1": "bold italic underline",
+        "markdown.h1.border": plain,
+        "markdown.link": plain,
+        "markdown.link_url": "underline",
+        "markdown.table.border": palette.inactive,
+        "markdown.table.header": "bold",
+        "markdown.kbd": "bold",
+    }
+    for level in range(2, 8):
+        styles[f"markdown.h{level}"] = "bold"
+    return Theme(styles)
+
+
 def _prose(text: str, terms: tuple[str, ...], style: str = "") -> RenderableType:
     # Markdown cannot carry search highlights; plain text can.
     if terms:
         return _text(text, terms, style)
-    return Markdown(text, style=style or "none")
+    return _Markdown(text, style=style or "none", code_theme="monokai")
 
 
 def _lines(b: Block, state: BlockState, palette: Palette, style: str = "") -> Text:
@@ -725,6 +878,7 @@ class StripRenderer:
             force_terminal=True,
             legacy_windows=False,
             no_color=False,
+            theme=markdown_theme(palette),
         )
 
     def render(self, b: Block, state: BlockState) -> list[Strip]:

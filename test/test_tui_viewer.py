@@ -374,3 +374,60 @@ class TestClaudeCodeLook:
         # The rule is there (Rich 14 draws it with "─", Rich 15 with "-").
         assert any("───" in seg.text or "---" in seg.text for seg in segments)
         assert not any(seg.style and seg.style.dim for seg in segments)
+
+
+class TestClaudeCodeMarkdown:
+    """Headings, tables and inline styles drawn as Claude Code does, the
+    same under every Rich release (Rich 15 paints ## magenta)."""
+
+    MD = (
+        "# One\n\n## Two\n\n### Three\n\nUse `code` here.\n\n"
+        "- first\n- second\n\n"
+        "| Name | What | Ok |\n|---|---|:---:|\n"
+        "| lens | a long description that has to wrap inside its cell | yes |\n"
+    )
+
+    def _lines(self, width: int = 60):
+        from claude_code_log.tui_viewer import BlockState, Palette, StripRenderer
+
+        block = Block(kind="assistant", body=self.MD, markdown=True, preview=10**9)
+        return StripRenderer(width, Palette()).render(block, BlockState())
+
+    @staticmethod
+    def _segment(strips: Any, text: str):
+        return next(seg for strip in strips for seg in strip if seg.text == text)
+
+    def test_headings_are_left_aligned_bold_and_uncoloured(self):
+        strips = self._lines()
+        text = ["".join(seg.text for seg in strip) for strip in strips]
+        assert text[0].startswith(" ● One")
+        assert any(line.startswith("   Two") for line in text)
+        one = self._segment(strips, "One").style
+        assert one.bold and one.italic and one.underline
+        for name in ("Two", "Three"):
+            style = self._segment(strips, name).style
+            assert style.bold and not style.underline
+            assert tuple(style.color.triplet) == (255, 255, 255)
+
+    def test_inline_code_has_claude_codes_permission_colour(self):
+        style = self._segment(self._lines(), "code").style
+        assert tuple(style.color.triplet) == (177, 185, 249)
+        assert style.bgcolor is None
+
+    def test_list_items_are_dashes(self):
+        text = ["".join(seg.text for seg in strip) for strip in self._lines()]
+        assert any(line.startswith("   - first") for line in text)
+
+    def test_tables_are_fully_boxed_and_wrap(self):
+        text = ["".join(seg.text for seg in strip).rstrip() for strip in self._lines()]
+        table = [
+            line.strip() for line in text if line.strip()[:1] in ("┌", "│", "├", "└")
+        ]
+        assert table[0].startswith("┌") and table[0].endswith("┐")
+        assert table[-1].startswith("└") and table[-1].endswith("┘")
+        assert all(
+            line.startswith("│") and line.endswith("│")
+            for line in table
+            if line[0] == "│"
+        )
+        assert sum(line.startswith("│") for line in table) > 2  # the long cell wrapped
