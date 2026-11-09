@@ -36,6 +36,8 @@ from .converter import (
     load_directory_transcripts,
 )
 from .renderer import get_renderer
+from .session_lens import default_projects_dir, load_theme, save_theme
+from .tui_search import SearchBar, focus_search_bar
 from .utils import DEFAULT_THEME, normalize_theme
 from .utils import atomic_write_text, get_project_display_name
 
@@ -55,7 +57,7 @@ class ProjectSelector(App[Path]):
     }
     """
 
-    TITLE = "Claude Code Log - Project Selector"
+    TITLE = "session-lens - Projects"
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
         Binding("escape", "quit", "Quit", show=False),
@@ -63,6 +65,7 @@ class ProjectSelector(App[Path]):
         Binding("a", "archive_project", "Archive Project"),
         Binding("d", "delete_project", "Delete Project"),
         Binding("r", "restore_project", "Restore Project"),
+        Binding("slash", "focus_search", "Search"),  # session-lens
     ]
 
     selected_project_path: reactive[Optional[Path]] = reactive(
@@ -72,6 +75,18 @@ class ProjectSelector(App[Path]):
     matching_projects: list[Path]
     archived_projects: set[Path]
 
+    # -- session-lens -----------------------------------------------------------
+
+    def watch_theme(self, theme: str) -> None:
+        save_theme(theme)
+
+    def action_focus_search(self) -> None:
+        focus_search_bar(self)
+
+    def _search_projects_dir(self) -> Path:
+        active = [p for p in self.projects if p not in self.archived_projects]
+        return active[0].parent if active else default_projects_dir()
+
     def __init__(
         self,
         projects: list[Path],
@@ -80,7 +95,7 @@ class ProjectSelector(App[Path]):
     ):
         """Initialize the project selector."""
         super().__init__()
-        self.theme = "gruvbox"
+        self.theme = load_theme(self)  # session-lens: remembered theme
         self.projects = projects
         self.matching_projects = matching_projects
         self.archived_projects = archived_projects or set()
@@ -88,6 +103,7 @@ class ProjectSelector(App[Path]):
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
         yield Header()
+        yield SearchBar(self._search_projects_dir())  # session-lens
 
         with Container(id="main-container"):
             with Vertical():
@@ -1262,7 +1278,7 @@ class SessionBrowser(App[Optional[str]]):
     }
     """
 
-    TITLE = "Claude Code Log - Session Browser"
+    TITLE = "session-lens - Sessions"
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
         Binding("escape", "back_to_projects", "Back", show=False),
@@ -1281,6 +1297,7 @@ class SessionBrowser(App[Optional[str]]):
         Binding("e", "toggle_expanded", "Toggle Expanded View"),
         Binding("p", "back_to_projects", "Open Project Selector"),
         Binding("?", "toggle_help", "Help"),
+        Binding("slash", "focus_search", "Search"),  # session-lens
     ]
 
     selected_session_id: reactive[Optional[str]] = reactive(cast(Optional[str], None))
@@ -1289,6 +1306,14 @@ class SessionBrowser(App[Optional[str]]):
     cache_manager: CacheManager
     sessions: dict[str, SessionCacheData]
     archived_sessions: dict[str, SessionCacheData]
+
+    # -- session-lens -----------------------------------------------------------
+
+    def watch_theme(self, theme: str) -> None:
+        save_theme(theme)
+
+    def action_focus_search(self) -> None:
+        focus_search_bar(self)
 
     def __init__(
         self,
@@ -1302,7 +1327,7 @@ class SessionBrowser(App[Optional[str]]):
         confused with ``self.theme``, Textual's own UI theme.
         """
         super().__init__()
-        self.theme = "gruvbox"
+        self.theme = load_theme(self)  # session-lens: remembered theme
         self.html_theme = normalize_theme(html_theme)
         self.project_path = project_path.resolve()
         self.is_archived_project = is_archived
@@ -1313,6 +1338,9 @@ class SessionBrowser(App[Optional[str]]):
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
         yield Header()
+        yield SearchBar(  # session-lens
+            self.project_path.parent, self.project_path, self.html_theme
+        )
 
         with Container(id="main-container"):
             with Vertical():

@@ -1,7 +1,7 @@
 [project]
-name = "claude-code-log"
+name = "session-lens"
 version = "1.7.0"
-description = "Convert Claude Code transcript JSONL files to HTML"
+description = "Browse and search your full Claude Code history, including everything before compaction. Fork of claude-code-log."
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
@@ -13,6 +13,7 @@ license-files = ["LICEN[CS]E*"]
 authors = [
     { name = "Daniel Demmel", email = "hello@danieldemmel.me" },
     { name = "Edward Z. Yang", email = "ezyang@mit.edu" },
+    { name = "hanifiakkus", email = "85901920+hanifiakkus@users.noreply.github.com" },
 ]
 
 dependencies = [
@@ -31,10 +32,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/daaain/claude-code-log"
-Issues = "https://github.com/daaain/claude-code-log/issues"
+Homepage = "https://github.com/hanifiakkus/session-lens"
+Issues = "https://github.com/hanifiakkus/session-lens/issues"
+Upstream = "https://github.com/daaain/claude-code-log"
 
 [project.scripts]
+session-lens = "claude_code_log.session_lens:main"
+slens = "claude_code_log.session_lens:main"
 claude-code-log = "claude_code_log.cli:main"
 
 [build-system]
@@ -43,6 +47,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 exclude = ["/docs", "/test", "/scripts"]
+
+# The distribution is "session-lens", the import package keeps upstream's name so
+# merges from upstream stay trivial.
+[tool.hatch.build.targets.wheel]
+packages = ["claude_code_log"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

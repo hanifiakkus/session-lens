@@ -685,6 +685,15 @@ class TestConnectionCensus:
             "applies apply_write_pragmas",
         ),
         ("cli.py", "_build_search_index"): (1, "applies apply_write_pragmas"),
+        ("tui_search.py", "prepare_search"): (
+            1,
+            "builds the FTS index like cli._build_search_index; applies "
+            "apply_write_pragmas",
+        ),
+        ("tui_search.py", "_connect_readonly"): (
+            1,
+            "mode=ro reader for the TUI's queries; cannot switch journal modes",
+        ),
         ("search.py", "fts5_available"): (
             1,
             "in-memory FTS5 capability probe, not the cache; connects to "

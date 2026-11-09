@@ -1,4 +1,48 @@
-# Claude Code Log
+# session-lens
+
+**Browse and search your full Claude Code history, including everything before compaction.**
+
+Claude Code keeps every message in `~/.claude/projects/**/*.jsonl`, but once a
+conversation is compacted the UI only shows the summary. session-lens reads those
+transcripts directly, so nothing is lost: a terminal UI with full-text search
+across every project, plus a local HTML archive.
+
+A lens on your sessions: it reads the transcripts where they are, and browsing
+or searching them never changes anything.
+
+session-lens is a fork of [daaain/claude-code-log](https://github.com/daaain/claude-code-log)
+(MIT). All of upstream's features are kept; the documentation below the line
+is upstream's and applies as-is (use `session-lens` in place of `claude-code-log`).
+
+## What session-lens adds
+
+- **`session-lens` (or the short `slens`) opens the TUI** — no flags needed. Every other subcommand and
+  flag works as upstream (`session-lens serve`, `session-lens --open-browser`, …).
+- **Search bar in the TUI** — always at the top of the project and session
+  lists. Press `/` and type: results appear as you type, ranked by relevance,
+  with the matches highlighted.
+  - `Enter` on a result shows the whole message.
+  - `o` opens the session in the browser, scrolled to that message.
+  - `Ctrl+T` switches between the current project and all projects.
+  - The first search brings the cache and the index up to date; after that
+    it only reads what changed.
+- **Remembered theme** — pick a theme with `Ctrl+P` → *Change theme*; it is
+  saved to `~/.config/session-lens/tui-theme`.
+- **Minimal HTML theme by default** (override with `--theme classic` or
+  `CLAUDE_CODE_LOG_THEME`).
+
+## Install
+
+```bash
+pipx install git+https://github.com/hanifiakkus/session-lens
+session-lens
+```
+
+Everything runs locally: no telemetry, and `serve` listens on `127.0.0.1` only.
+
+---
+
+# Claude Code Log (upstream documentation)
 
 A Python CLI tool that converts Claude Code transcript JSONL files into readable HTML and Markdown (plus JSON for tooling).
 
