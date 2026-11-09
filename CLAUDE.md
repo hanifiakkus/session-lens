@@ -2,6 +2,28 @@
 
 A Python CLI tool that converts Claude Code transcript JSONL files into readable HTML format.
 
+## This fork: session-lens
+
+This repo is **session-lens**, a fork of
+[daaain/claude-code-log](https://github.com/daaain/claude-code-log) (remote
+`upstream`). The distribution and commands are `session-lens` / `slens`
+(`claude-code-log` still works); the import package keeps upstream's name,
+`claude_code_log`, so upstream merges stay simple. Don't rename it.
+
+- Fork-only code: `session_lens.py` (entry point, TUI loop, remembered
+  theme), `tui_all.py` (every project's sessions), `tui_search.py` (search
+  bar), `tui_viewer.py` (reading a session the way Claude Code's chat shows
+  it). Changes to upstream files are kept small; `git diff upstream/main --
+  claude_code_log` lists them.
+- The viewer copies Claude Code's look (colours, marks, Markdown, sticky
+  prompt, compaction line), with values read from the installed Claude Code
+  CLI. Keep it independent of Rich's defaults, which change between Rich
+  releases (the user's pipx install has Rich 15, the dev venv may not).
+- The README's top section documents the fork; everything below its `---`
+  is upstream's. Update the top section with user-facing changes.
+- The user's pipx install is editable from this folder (see README,
+  Install).
+
 ## Project Overview
 
 This tool processes Claude Code transcript files (stored as JSONL) and generates clean, minimalist HTML pages with comprehensive session navigation and token usage tracking. It's designed to create a readable log of your Claude interactions with rich metadata and easy navigation.

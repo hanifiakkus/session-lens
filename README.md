@@ -20,19 +20,22 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
   needed — on **every project's sessions at once**, newest first, wherever
   you start it. `Esc` goes to the project selector: its first row,
   **★ ALL projects**, comes back to all of them; any other row opens that
-  one project (where archive/delete/restore live). Every other subcommand
-  and flag works as upstream (`session-lens serve`,
-  `session-lens --open-browser`, `session-lens --tui` for upstream's
-  per-directory start, …).
+  one project (where archive/delete/restore live). In a session list,
+  `Enter` reads the session in the TUI (see below), `h` opens its HTML page
+  and `c` resumes it in Claude Code. Every other subcommand and flag works
+  as upstream (`session-lens serve`, `session-lens --open-browser`,
+  `session-lens --tui` for upstream's per-directory start, …).
 - **Search bar in the TUI** — one line under the project and session
   lists' header. Press `Ctrl+F` (or `/`), or click it, and type: results
   appear as you type, with the matches highlighted. `Ctrl+F` on the results
   takes you back to the box.
   - By default it searches **session names** (the title the list shows),
-    newest first. `Enter` opens the session in the browser.
+    newest first.
   - `Ctrl+R` switches to **message content**: full-text search over every
-    message, ranked by relevance. `Enter` shows the whole message, `o` opens
-    the session in the browser scrolled to it.
+    message, ranked by relevance.
+  - `Enter` reads the result's session in the TUI; a message result opens
+    at that message with your words already found. `o` opens the session's
+    HTML page in the browser instead, scrolled to the message.
   - Each result shows its session's size: message count, tokens and the
     transcript's size on disk.
   - `Ctrl+T` switches between the current project and all projects.
@@ -60,8 +63,13 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
     session's HTML page.
   - Long sessions open at once: the end (or the message you opened) is
     drawn first, the rest in the background.
+- **Every compaction found** — newer Claude Code versions put a notice
+  before some compaction summaries, and those were taken for (very long)
+  prompts. They are recognised as compactions again, in the TUI and in
+  the HTML pages.
 - **Remembered theme** — pick a theme with `Ctrl+P` → *Change theme*; it is
-  saved to `~/.config/session-lens/tui-theme`.
+  saved to `~/.config/session-lens/tui-theme` (a theme saved under the
+  project's earlier names, session-rewind and cclens, is still read).
 - **Minimal HTML theme by default** (override with `--theme classic` or
   `CLAUDE_CODE_LOG_THEME`).
 
@@ -73,6 +81,25 @@ session-lens
 ```
 
 Everything runs locally: no telemetry, and `serve` listens on `127.0.0.1` only.
+
+To work on it, install your clone in editable mode, so your changes apply
+at once:
+
+```bash
+git clone https://github.com/hanifiakkus/session-lens
+cd session-lens
+uv sync                    # the development environment (.venv)
+pipx install --editable .  # the session-lens / slens commands
+just ci                    # before committing
+```
+
+An editable install points at the clone's folder. If you move or rename
+the folder, run `pipx install --force --editable .` again in its new place
+(and `rm -rf .venv && uv sync`); otherwise the commands fail with
+`ModuleNotFoundError: No module named 'claude_code_log'`.
+
+The import package keeps upstream's name, `claude_code_log`, so merges from
+upstream stay simple.
 
 ---
 
