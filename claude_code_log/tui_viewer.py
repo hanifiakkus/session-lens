@@ -574,6 +574,7 @@ class Palette:
     tool_ok: str = "rgb(78,186,101)"
     tool_error: str = "rgb(255,107,128)"
     user_background: str = "on rgb(55,55,55)"
+    user_background_hover: str = "on rgb(70,70,70)"
     bash_background: str = "on rgb(65,60,65)"
     bash_mark: str = "rgb(253,93,177)"
     diff_added: str = "on rgb(34,92,43)"
@@ -582,6 +583,9 @@ class Palette:
     permission: str = "rgb(177,185,249)"
     current: str = "yellow"
 
+
+#: The mark before a user prompt (Claude Code's ``figures.pointer``).
+POINTER = "\u276f"
 
 #: Shown when a thinking block is opened whose text was not kept: Claude
 #: Code stores only a signature for most thinking, so there is nothing to show.
@@ -793,7 +797,7 @@ def block_renderable(b: Block, state: BlockState, palette: Palette) -> Renderabl
     """The Rich renderable for one block, Claude Code's look."""
     terms = state.terms
     if b.kind == "user":
-        return _gutter("> ", _text(b.body, terms), palette.inactive)
+        return _gutter(f"{POINTER} ", _text(b.body, terms), palette.inactive)
     if b.kind == "bash":
         return _gutter("! ", _text(b.body, terms), palette.bash_mark)
     if b.kind == "assistant":
@@ -875,6 +879,17 @@ def undim(segments: list[Any], text: tuple[int, int, int]) -> list[Any]:
     return out
 
 
+#: Claude Code cuts the sticky prompt's text at this many characters.
+STICKY_MAX = 500
+
+
+def sticky_text(prompt: str) -> str:
+    """The sticky line's text: the first paragraph, whitespace collapsed."""
+    text = prompt.lstrip()
+    paragraph = re.split(r"\n\s*\n", text, maxsplit=1)[0]
+    return " ".join(paragraph[:STICKY_MAX].split())
+
+
 class StripRenderer:
     """Renders blocks to terminal lines; safe to use off the UI thread."""
 
@@ -938,17 +953,18 @@ class StripRenderer:
         strips.append(Strip.blank(self.width))  # the gap Claude Code leaves
         return strips
 
-    def sticky(self, b: Block) -> Strip:
+    def sticky(self, b: Block, hover: bool = False) -> Strip:
         """One line of a user prompt, for the top of the view.
 
-        Claude Code keeps the prompt that started what is on screen pinned
-        at the top once it has scrolled out of sight; this is that line.
+        Claude Code's sticky prompt: ``❯`` and the prompt's first paragraph
+        (500 characters at most) in the text colour, cut to one line, on the
+        prompt background, lighter under the mouse.
         """
         from rich.segment import Segment
         from rich.style import Style
 
-        text = Text("> ", style=self.palette.inactive)
-        text.append(" ".join(b.body.split()))
+        text = Text(f"{POINTER} ")
+        text.append(sticky_text(b.body))
         options = self.console.options.update(
             width=self.width - 2, no_wrap=True, overflow="ellipsis"
         )
@@ -956,7 +972,11 @@ class StripRenderer:
             text, options, style=Style.parse(self.palette.text), pad=True
         )
         segments = [Segment(" "), *lines[0], Segment(" ")]
-        background = Style.parse(self.palette.user_background)
+        background = Style.parse(
+            self.palette.user_background_hover
+            if hover
+            else self.palette.user_background
+        )
         return Strip(
             list(Segment.apply_style(segments, post_style=background)), self.width
         )
@@ -993,7 +1013,11 @@ class ConversationView(ScrollView, can_focus=True):
         self.renderer: Optional[StripRenderer] = None
         #: Indexes of the user prompts, in order (for the sticky prompt).
         self._prompts: list[int] = []
-        self._sticky_cache: dict[int, Strip] = {}
+        self._sticky_cache: dict[tuple[int, bool], Strip] = {}
+        #: The last scroll went up: only then is the prompt pinned, so it
+        #: takes no room while you read on downwards.
+        self.scrolled_up = False
+        self._sticky_hover = False
 
     # -- content ----------------------------------------------------------
 
@@ -1005,6 +1029,7 @@ class ConversationView(ScrollView, can_focus=True):
         self.renderer = renderer
         self._prompts = [i for i, b in enumerate(blocks) if b.kind == "user"]
         self._sticky_cache = {}
+        self.scrolled_up = False
         self._relayout()
 
     def add_rendered(self, start: int, rendered: list[list[Strip]]) -> None:
@@ -1082,8 +1107,12 @@ class ConversationView(ScrollView, can_focus=True):
 
         It is the last user prompt at or above the block on the top line,
         once its own first line is above the view. Scrolling up to it lets
-        it go; scrolling past it pins the one before.
+        it go; scrolling past it pins the one before. As in Claude Code it
+        is never pinned at the bottom of the conversation, and (unlike
+        Claude Code, to keep the line free) only while scrolling up.
         """
+        if not self.scrolled_up or self.scroll_y >= self.max_scroll_y:
+            return None
         top_line = int(self.scroll_offset.y)
         index = self.block_at(top_line)
         if index is None or not self._prompts:
@@ -1105,10 +1134,11 @@ class ConversationView(ScrollView, can_focus=True):
         if y == 0 and self.renderer is not None:
             prompt = self.sticky_prompt()
             if prompt is not None:
-                strip = self._sticky_cache.get(prompt)
+                key = (prompt, self._sticky_hover)
+                strip = self._sticky_cache.get(key)
                 if strip is None:
-                    strip = self.renderer.sticky(self.blocks[prompt])
-                    self._sticky_cache[prompt] = strip
+                    strip = self.renderer.sticky(self.blocks[prompt], *key[1:])
+                    self._sticky_cache[key] = strip
                 return strip.crop_extend(0, width, self.rich_style)
         index = self.block_at(line)
         if index is None:
@@ -1116,6 +1146,22 @@ class ConversationView(ScrollView, can_focus=True):
         strips = self.strips[index] or []
         strip = strips[line - self._tops[index - self.lo]]
         return strip.crop_extend(0, width, self.rich_style)
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if round(new_value) != round(old_value):
+            self.scrolled_up = new_value < old_value
+
+    def _set_sticky_hover(self, hover: bool) -> None:
+        if hover != self._sticky_hover:
+            self._sticky_hover = hover
+            self.refresh_line(0)
+
+    def on_mouse_move(self, event: Any) -> None:
+        self._set_sticky_hover(int(event.y) == 0 and self.sticky_prompt() is not None)
+
+    def on_leave(self, _event: Any) -> None:
+        self._set_sticky_hover(False)
 
     def on_click(self, event: Any) -> None:
         if int(event.y) == 0:

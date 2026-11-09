@@ -43,7 +43,7 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
     builds the search index); after that it only reads what changed.
 - **Read a session the way Claude Code shows it** — `Enter` on a session
   (or on a search result) opens it full screen as Claude Code's chat screen
-  draws it: your prompts behind `>`, Claude's replies behind `●`, each tool
+  draws it: your prompts behind `❯`, Claude's replies behind `●`, each tool
   call as `● Bash(…)` with its result under `⎿` cut to a few lines, and
   thinking as `✻ Thinking…`, in Claude Code's own (dark theme) colours on
   your terminal's background. Everything compaction hid is there too,
@@ -51,9 +51,11 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
   - Click a long result, a thinking block or a compaction summary to open
     it; `Ctrl+O` opens or closes them all. Claude Code keeps the text of
     only some thinking; one without it says so when opened.
-  - As in Claude Code, the prompt that started what is on screen stays
-    pinned on the top line once it scrolls out of sight; scrolling past it
-    pins the one before. Click the pinned line to go to the prompt.
+  - As in Claude Code, the prompt that started what is on screen is pinned
+    on the top line once it scrolls out of sight (its first paragraph, on
+    one line); scrolling past it pins the one before. It shows only while
+    you scroll up, so reading on downwards keeps the line, and never at
+    the bottom of the conversation. Click it to go to the prompt.
   - Headings, lists, inline code and tables are drawn as Claude Code draws
     them, tables with every border and their cells wrapped to fit.
   - `Ctrl+F` finds text in the conversation: `Enter` or `↓` for the next

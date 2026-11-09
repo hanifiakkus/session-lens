@@ -207,29 +207,47 @@ async def _open(pilot: Any, app: Any) -> ConversationScreen:
 
 class TestConversationScreen:
     @pytest.mark.asyncio
-    async def test_the_prompt_above_stays_pinned_at_the_top(self, project):
+    async def test_the_prompt_above_is_pinned_while_scrolling_up(self, project):
         """Claude Code pins the prompt that started what is on screen once it
-        scrolls out of sight; scrolling up to it lets it go, and clicking
-        the pinned line goes to it."""
+        scrolls out of sight; here only while scrolling up, never at the
+        bottom. Clicking the pinned line goes to the prompt."""
         project_dir, manager = project
         app = _Host.make(ConversationScreen(project_dir, SESSION, manager))
         async with app.run_test(size=(100, 12)) as pilot:
             screen = await _open(pilot, app)
             view = screen.view
             prompt = next(i for i, b in enumerate(screen.blocks) if b.kind == "user")
+
+            def top_line() -> str:
+                return "".join(seg.text for seg in view.render_line(0))
+
             view.scroll_end(animate=False, immediate=True)
             await pilot.pause()
             assert view.scroll_y > 0  # at the end, the prompt far above
-            assert view.sticky_prompt() == prompt
-            first = "".join(seg.text for seg in view.render_line(0))
-            assert first.startswith(" > Fix the failing test in app.py")
+            assert view.sticky_prompt() is None  # never at the bottom
 
+            view.scroll_to(y=view.scroll_y - 2, animate=False, immediate=True)
+            await pilot.pause()
+            assert view.sticky_prompt() == prompt
+            assert top_line().startswith(" \u276f Fix the failing test in app.py")
+
+            view.scroll_to(y=view.scroll_y + 1, animate=False, immediate=True)
+            await pilot.pause()
+            assert view.sticky_prompt() is None  # reading on downwards
+
+            view.scroll_to(y=view.scroll_y - 1, animate=False, immediate=True)
+            await pilot.pause()
             await pilot.click(view, offset=(5, 0))
             await pilot.pause()
             assert view.scroll_y == view.top_of(prompt)
             assert view.sticky_prompt() is None
-            first = "".join(seg.text for seg in view.render_line(0))
-            assert first.startswith(" > Fix the failing test")  # the prompt itself
+            assert top_line().startswith(" \u276f Fix the failing test")  # itself
+
+    def test_sticky_text_is_the_first_paragraph(self):
+        from claude_code_log.tui_viewer import STICKY_MAX, sticky_text
+
+        assert sticky_text("\n  fix   this\nnow\n\nmore detail") == "fix this now"
+        assert len(sticky_text("x" * 2000)) == STICKY_MAX
 
     @pytest.mark.asyncio
     async def test_opens_at_the_end_and_escape_closes(self, project):
