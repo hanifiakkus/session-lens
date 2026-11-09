@@ -137,7 +137,8 @@ class Block:
 
     ``kind`` picks the look: ``user``, ``assistant``, ``tool``, ``thinking``,
     ``compact``, ``note`` (system and command output), ``interrupted``,
-    ``bash`` (a ``!`` command) and ``branch``.
+    ``bash`` (a ``!`` command), ``branch`` and ``group`` (a run of reads
+    and searches, folded into one line as Claude Code does).
     """
 
     kind: str
@@ -152,6 +153,10 @@ class Block:
     preview: int = PREVIEW_LINES
     #: Transcript entry uuids this block shows, for "open at this message".
     uuids: tuple[str, ...] = ()
+    #: The tool's own name (``Grep``), for a ``tool`` block.
+    tool: str = ""
+    #: The blocks a ``group`` folds.
+    children: list["Block"] = field(default_factory=lambda: cast("list[Block]", []))
     _folded: Optional[str] = field(default=None, repr=False, compare=False)
 
     @property
@@ -160,11 +165,16 @@ class Block:
             return True  # an empty one opens to say there is nothing saved
         if self.kind == "compact":
             return bool(self.body)
+        if self.kind == "group":
+            return True
         return len(self.body.splitlines()) > self.preview
 
     @property
     def search_text(self) -> str:
-        return f"{self.title}\n{self.body}"
+        own = f"{self.title}\n{self.body}"
+        if not self.children:
+            return own
+        return "\n".join([own, *(c.search_text for c in self.children)])
 
     def folded(self) -> str:
         """``search_text`` folded for matching, computed once: a long
@@ -304,7 +314,7 @@ def tool_block(
     ``fallback`` is upstream's Markdown for the result, used for outputs
     with no plain-text field.
     """
-    block = Block(kind="tool", title=tool_title(use, cwd))
+    block = Block(kind="tool", title=tool_title(use, cwd), tool=use.tool_name)
     block.uuids = (use.meta.uuid,) + ((result.meta.uuid,) if result else ())
     tool_input = use.input
     output = result.output if result is not None else None
@@ -514,7 +524,73 @@ def build_blocks(roots: list[TemplateMessage], ctx: RenderingContext) -> list[Bl
     builder = _Builder(ctx)
     for root in roots:
         builder.walk(root)
-    return builder.blocks
+    return group_reads_and_searches(builder.blocks)
+
+
+#: Tools Claude Code folds into one "Searched for …, read …" line.
+SEARCH_TOOLS = frozenset({"Grep", "Glob"})
+READ_TOOLS = frozenset({"Read"})
+
+
+def _groupable(b: Block) -> bool:
+    return b.kind == "tool" and not b.error and b.tool in SEARCH_TOOLS | READ_TOOLS
+
+
+def group_title(searches: int, reads: int) -> str:
+    """Claude Code's words: ``Searched for 2 patterns, read 3 files``."""
+    parts: list[str] = []
+    if searches:
+        verb = "Searched for" if not parts else "searched for"
+        parts.append(f"{verb} {searches} pattern{'s' if searches != 1 else ''}")
+    if reads:
+        verb = "Read" if not parts else "read"
+        parts.append(f"{verb} {reads} file{'s' if reads != 1 else ''}")
+    return ", ".join(parts)
+
+
+def group_reads_and_searches(blocks: list[Block]) -> list[Block]:
+    """Fold each run of two or more reads and searches into one block.
+
+    Claude Code collapses consecutive Read/Grep/Glob calls into a single
+    ``● Searched for 2 patterns, read 3 files`` line that opens on demand.
+    A thinking block between two of them goes into the fold; a failed call
+    or anything else ends the run.
+    """
+    out: list[Block] = []
+    i = 0
+    while i < len(blocks):
+        if not _groupable(blocks[i]):
+            out.append(blocks[i])
+            i += 1
+            continue
+        run = [blocks[i]]
+        j = i + 1
+        while j < len(blocks):
+            k = j
+            while k < len(blocks) and blocks[k].kind == "thinking":
+                k += 1
+            if k < len(blocks) and _groupable(blocks[k]):
+                run.extend(blocks[j : k + 1])
+                j = k + 1
+            else:
+                break
+        tools = [b for b in run if b.kind == "tool"]
+        if len(tools) < 2:
+            out.append(blocks[i])
+            i += 1
+            continue
+        searches = sum(b.tool in SEARCH_TOOLS for b in tools)
+        reads = len({b.title for b in tools if b.tool in READ_TOOLS})
+        out.append(
+            Block(
+                kind="group",
+                title=group_title(searches, reads),
+                children=run,
+                uuids=tuple(u for b in run for u in b.uuids),
+            )
+        )
+        i = j
+    return out
 
 
 def load_blocks(
@@ -834,6 +910,16 @@ def block_renderable(b: Block, state: BlockState, palette: Palette) -> Renderabl
         )
     if b.kind == "branch":
         return _text(f"⎇ Branch · {b.title}", terms, f"{palette.inactive} italic")
+    if b.kind == "group":
+        head = _text(b.title, terms)
+        if not state.expanded:
+            head.append(" (click to expand)", style=palette.inactive)
+        parts = [_gutter("● ", head, palette.tool_ok)]
+        if state.expanded:
+            for child in b.children:
+                parts.append(Text(""))
+                parts.append(block_renderable(child, BlockState(terms=terms), palette))
+        return Group(*parts)
     return _gutter("  ⎿  ", _lines(b, state, palette), palette.inactive)
 
 
@@ -878,6 +964,9 @@ def undim(segments: list[Any], text: tuple[int, int, int]) -> list[Any]:
         )
     return out
 
+
+#: The "Jump to bottom" button's text, longest first; the first that fits.
+JUMP_LABELS = ("Jump to bottom (End) \u2193", "Jump to bottom \u2193", "Jump to bottom")
 
 #: Claude Code cuts the sticky prompt's text at this many characters.
 STICKY_MAX = 500
@@ -953,6 +1042,25 @@ class StripRenderer:
         strips.append(Strip.blank(self.width))  # the gap Claude Code leaves
         return strips
 
+    def pill(self, width: int, hover: bool = False) -> Strip:
+        """Claude Code's "Jump to bottom" button, for the bottom line.
+
+        Shown while you are not at the bottom; the shortcut is End here.
+        """
+        from rich.segment import Segment
+        from rich.style import Style
+
+        label = next(
+            (t for t in JUMP_LABELS if len(t) + 2 <= width - 2), JUMP_LABELS[-1]
+        )
+        background = (
+            self.palette.user_background_hover
+            if hover
+            else self.palette.user_background
+        )
+        style = Style.parse(f"{self.palette.text} {background}")
+        return Strip([Segment(f" {label} ", style)])
+
     def sticky(self, b: Block, hover: bool = False) -> Strip:
         """One line of a user prompt, for the top of the view.
 
@@ -1018,6 +1126,7 @@ class ConversationView(ScrollView, can_focus=True):
         #: takes no room while you read on downwards.
         self.scrolled_up = False
         self._sticky_hover = False
+        self._pill_hover = False
 
     # -- content ----------------------------------------------------------
 
@@ -1140,12 +1249,32 @@ class ConversationView(ScrollView, can_focus=True):
                     strip = self.renderer.sticky(self.blocks[prompt], *key[1:])
                     self._sticky_cache[key] = strip
                 return strip.crop_extend(0, width, self.rich_style)
+        strip = self._content_line(line, width)
+        if y == self.size.height - 1 and self.renderer is not None:
+            span = self.pill_span()
+            if span is not None:
+                start, end = span
+                pill = self.renderer.pill(width, self._pill_hover)
+                strip = Strip.join([strip.crop(0, start), pill, strip.crop(end, width)])
+        return strip
+
+    def _content_line(self, line: int, width: int) -> Strip:
         index = self.block_at(line)
         if index is None:
             return Strip.blank(width, self.rich_style)
         strips = self.strips[index] or []
         strip = strips[line - self._tops[index - self.lo]]
         return strip.crop_extend(0, width, self.rich_style)
+
+    def pill_span(self) -> Optional[tuple[int, int]]:
+        """Columns of the "Jump to bottom" button on the bottom line, if
+        shown: as in Claude Code, whenever the view is not at the bottom."""
+        if self.renderer is None or self.scroll_y >= self.max_scroll_y:
+            return None
+        width = self.size.width
+        pill_width = self.renderer.pill(width).cell_length
+        start = max(0, (width - pill_width) // 2)
+        return start, min(width, start + pill_width)
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
@@ -1157,13 +1286,27 @@ class ConversationView(ScrollView, can_focus=True):
             self._sticky_hover = hover
             self.refresh_line(0)
 
+    def _on_pill(self, x: int, y: int) -> bool:
+        span = self.pill_span()
+        return span is not None and y == self.size.height - 1 and span[0] <= x < span[1]
+
     def on_mouse_move(self, event: Any) -> None:
         self._set_sticky_hover(int(event.y) == 0 and self.sticky_prompt() is not None)
+        hover = self._on_pill(int(event.x), int(event.y))
+        if hover != self._pill_hover:
+            self._pill_hover = hover
+            self.refresh_line(self.size.height - 1)
 
     def on_leave(self, _event: Any) -> None:
         self._set_sticky_hover(False)
+        if self._pill_hover:
+            self._pill_hover = False
+            self.refresh_line(self.size.height - 1)
 
     def on_click(self, event: Any) -> None:
+        if self._on_pill(int(event.x), int(event.y)):
+            self.scroll_end(animate=False, immediate=True)
+            return
         if int(event.y) == 0:
             prompt = self.sticky_prompt()
             if prompt is not None:

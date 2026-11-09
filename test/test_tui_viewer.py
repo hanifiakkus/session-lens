@@ -529,3 +529,87 @@ class TestCompaction:
         assert "needle" in compact[0].body
         assert not any(b.kind == "user" and "needle" in b.body for b in blocks)
         assert find_matches(blocks, "needle") == [blocks.index(compact[0])]
+
+
+class TestReadSearchGroups:
+    """Runs of reads and searches fold into one Claude Code-style line."""
+
+    @staticmethod
+    def _tool(tool: str, title: str, error: bool = False) -> Block:
+        return Block(kind="tool", tool=tool, title=title, body="x", error=error)
+
+    def test_a_run_folds_into_one_line_with_claude_codes_words(self):
+        from claude_code_log.tui_viewer import group_reads_and_searches
+
+        blocks = [
+            Block(kind="assistant", body="looking"),
+            self._tool("Grep", 'Search(pattern: "a")'),
+            Block(kind="thinking", title="Thinking…"),
+            self._tool("Read", "Read(a.py)"),
+            self._tool("Read", "Read(a.py)"),
+            self._tool("Glob", 'Search(pattern: "*.py")'),
+            Block(kind="assistant", body="done"),
+        ]
+        out = group_reads_and_searches(blocks)
+        assert [b.kind for b in out] == ["assistant", "group", "assistant"]
+        group = out[1]
+        assert group.title == "Searched for 2 patterns, read 1 file"
+        assert len(group.children) == 5
+        assert group.collapsible
+
+    def test_a_single_call_a_failure_or_a_trailing_thought_stays_out(self):
+        from claude_code_log.tui_viewer import group_reads_and_searches
+
+        lone = [self._tool("Read", "Read(a.py)"), Block(kind="thinking")]
+        assert group_reads_and_searches(lone) == lone
+        failed = [
+            self._tool("Read", "Read(a.py)"),
+            self._tool("Read", "Read(b.py)", error=True),
+        ]
+        assert [b.kind for b in group_reads_and_searches(failed)] == ["tool", "tool"]
+        bash = [self._tool("Read", "Read(a.py)"), self._tool("Bash", "Bash(ls)")]
+        assert [b.kind for b in group_reads_and_searches(bash)] == ["tool", "tool"]
+
+    def test_find_sees_inside_a_fold(self):
+        from claude_code_log.tui_viewer import group_reads_and_searches
+
+        blocks = group_reads_and_searches(
+            [self._tool("Read", "Read(needle.py)"), self._tool("Grep", "Search(x)")]
+        )
+        assert find_matches(blocks, "needle") == [0]
+
+    def test_group_title_words(self):
+        from claude_code_log.tui_viewer import group_title
+
+        assert group_title(1, 0) == "Searched for 1 pattern"
+        assert group_title(0, 3) == "Read 3 files"
+        assert group_title(2, 1) == "Searched for 2 patterns, read 1 file"
+
+
+class TestJumpToBottom:
+    @pytest.mark.asyncio
+    async def test_shown_off_the_bottom_and_takes_you_there(self, project):
+        project_dir, manager = project
+        app = _Host.make(ConversationScreen(project_dir, SESSION, manager))
+        async with app.run_test(size=(100, 12)) as pilot:
+            screen = await _open(pilot, app)
+            view = screen.view
+            bottom = view.size.height - 1
+
+            def last_line() -> str:
+                return "".join(seg.text for seg in view.render_line(bottom))
+
+            view.scroll_end(animate=False, immediate=True)
+            await pilot.pause()
+            assert view.pill_span() is None
+            assert "Jump to bottom" not in last_line()
+
+            view.scroll_home(animate=False, immediate=True)
+            await pilot.pause()
+            span = view.pill_span()
+            assert span is not None
+            assert "Jump to bottom (End) ↓" in last_line()
+
+            await pilot.click(view, offset=(span[0] + 2, bottom))
+            await pilot.pause()
+            assert view.scroll_y == view.max_scroll_y

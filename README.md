@@ -56,10 +56,15 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
     one line); scrolling past it pins the one before. It shows only while
     you scroll up, so reading on downwards keeps the line, and never at
     the bottom of the conversation. Click it to go to the prompt.
+  - Runs of reads and searches fold into one line, as in Claude Code:
+    `● Searched for 2 patterns, read 3 files`. Click it to see the calls.
+  - Away from the bottom, a `Jump to bottom (End) ↓` button sits at the
+    foot of the screen, as in Claude Code; click it or press `End`.
   - Headings, lists, inline code and tables are drawn as Claude Code draws
     them, tables with every border and their cells wrapped to fit.
-  - `Ctrl+F` finds text in the conversation: `Enter` or `↓` for the next
-    match, `↑` for the previous one. A search result opens at its message
+  - `Ctrl+F` finds text in the conversation, inside folded blocks too, and
+    counts the matches (`3/12`): `Enter` or `↓` for the next match, `↑` for
+    the previous one. A search result opens at its message
     with the search already run.
   - `Esc` closes the find box, then the conversation. `h` still opens the
     session's HTML page.
