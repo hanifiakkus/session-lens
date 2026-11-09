@@ -37,7 +37,7 @@ from .cache import (
 )
 from .converter import ensure_fresh_cache, generate_single_session_file
 from .migrations.runner import apply_write_pragmas, cache_busy_timeout
-from .tui_viewer import ConversationScreen, format_session_title
+from .tui_viewer import ConversationScreen
 from .utils import DEFAULT_THEME, best_working_dir
 
 #: Rows fetched per query. FTS5 ranks by relevance, so the first page is the
@@ -645,16 +645,11 @@ class SearchScreen(ModalScreen[None]):
         # hit opens at that message with the query found; `o` still opens
         # the browser.
         is_message = result.type != TITLE_HIT_TYPE
-        name = result.snippet if not is_message else ""
         _app_of(self).push_screen(
             ConversationScreen(
                 Path(result.project_path),
                 result.session_id,
-                title=format_session_title(
-                    name or f"Session {result.session_id[:8]}",
-                    None if is_message else result.timestamp,
-                    project_label(result.project_path),
-                ),
+                project_label=project_label(result.project_path),
                 # prepare_search() just refreshed every project's cache.
                 refresh=False,
                 target_uuid=result.message_uuid if is_message else None,

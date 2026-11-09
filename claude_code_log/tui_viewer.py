@@ -853,7 +853,7 @@ class ConversationScreen(ModalScreen[None]):
         session_id: str,
         cache_manager: Optional[CacheManager] = None,
         *,
-        title: str = "",
+        project_label: str = "",
         refresh: bool = True,
         target_uuid: Optional[str] = None,
         find: str = "",
@@ -865,7 +865,11 @@ class ConversationScreen(ModalScreen[None]):
         self.refresh_cache = refresh
         self.target_uuid = target_uuid
         self.initial_find = find
-        self.title_text = title or f"Session {session_id[:8]}"
+        self.project_label = project_label
+        # The real name comes from the cache once the session loads.
+        self.title_text = format_session_title(
+            f"Session {session_id[:8]}", None, project_label
+        )
         self.blocks: list[Block] = []
         self.loaded = False
         self.matches: list[int] = []
@@ -943,6 +947,7 @@ class ConversationScreen(ModalScreen[None]):
         except Exception as e:  # noqa: BLE001 - surfaced to the user
             app.call_from_thread(self._status, f"Could not load the session: {e}")
             return
+        app.call_from_thread(self._set_title, self._title_from(manager))
         if not blocks:
             app.call_from_thread(self._status, "This session has no messages to show.")
             return
@@ -954,6 +959,29 @@ class ConversationScreen(ModalScreen[None]):
         renderer = StripRenderer(width, self._palette)
         app.call_from_thread(self._start, blocks, renderer)
         self._render_in_batches(blocks, renderer, target, worker)
+
+    def _title_from(self, manager: CacheManager) -> str:
+        """The name the session list shows (AI title, summary or first
+        prompt) and when it started, from the cache."""
+        from .tui_search import session_name
+
+        name = ""
+        started: Optional[str] = None
+        try:
+            project = manager.get_cached_project_data()
+            data = project.sessions.get(self.session_id) if project else None
+        except Exception:  # noqa: BLE001 - a title is not worth an error
+            data = None
+        if data is not None:
+            name = session_name(data.ai_title, data.summary, data.first_user_message)
+            started = data.first_timestamp
+        return format_session_title(
+            name or f"Session {self.session_id[:8]}", started, self.project_label
+        )
+
+    def _set_title(self, title: str) -> None:
+        self.title_text = title
+        self.query_one("#conv-title", Static).update(title)
 
     def _render_in_batches(
         self,

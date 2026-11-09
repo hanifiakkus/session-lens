@@ -37,8 +37,8 @@ from .converter import (
 )
 from .renderer import get_renderer
 from .session_lens import default_projects_dir, load_theme, save_theme
-from .tui_search import SearchBar, focus_search_bar, session_name
-from .tui_viewer import ConversationScreen, format_session_title
+from .tui_search import SearchBar, focus_search_bar
+from .tui_viewer import ConversationScreen
 from .utils import DEFAULT_THEME, normalize_theme
 from .utils import atomic_write_text, get_project_display_name
 
@@ -1662,22 +1662,12 @@ class SessionBrowser(App[Optional[str]]):
         if not session_id:
             self.notify("No session selected", severity="warning")
             return
-        data = self.sessions.get(session_id) or self.archived_sessions.get(session_id)
-        name = (
-            session_name(data.ai_title, data.summary, data.first_user_message)
-            if data
-            else ""
-        )
         archived = self.is_archived_project or session_id in self.archived_sessions
         self.push_screen(
             ConversationScreen(
                 self.project_path,
                 session_id,
                 self.cache_manager,
-                title=format_session_title(
-                    name or f"Session {session_id[:8]}",
-                    data.first_timestamp if data else None,
-                ),
                 refresh=not archived,
             )
         )

@@ -270,6 +270,22 @@ class TestConversationScreen:
                 and screen.blocks[screen.matches[screen.current]].kind == "tool"
             )
 
+    @pytest.mark.asyncio
+    async def test_title_is_the_session_name_not_its_id(self, project):
+        # Opened from a message search hit, the screen knows only the id.
+        project_dir, manager = project
+        screen = ConversationScreen(
+            project_dir, SESSION, manager, project_label="~/work/app"
+        )
+        app = _Host.make(screen)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _open(pilot, app)
+            title = str(screen.query_one("#conv-title").render())
+            assert title.startswith("Fix the failing test in app.py")
+            assert "2026-01-01" in title
+            assert title.endswith("~/work/app")
+            assert SESSION[:8] not in title
+
 
 class TestOpeningFromTheSessionList:
     @pytest.mark.asyncio
