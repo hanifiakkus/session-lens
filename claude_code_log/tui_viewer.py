@@ -922,6 +922,29 @@ class StripRenderer:
         strips.append(Strip.blank(self.width))  # the gap Claude Code leaves
         return strips
 
+    def sticky(self, b: Block) -> Strip:
+        """One line of a user prompt, for the top of the view.
+
+        Claude Code keeps the prompt that started what is on screen pinned
+        at the top once it has scrolled out of sight; this is that line.
+        """
+        from rich.segment import Segment
+        from rich.style import Style
+
+        text = Text("> ", style=self.palette.inactive)
+        text.append(" ".join(b.body.split()))
+        options = self.console.options.update(
+            width=self.width - 2, no_wrap=True, overflow="ellipsis"
+        )
+        lines = self.console.render_lines(
+            text, options, style=Style.parse(self.palette.text), pad=True
+        )
+        segments = [Segment(" "), *lines[0], Segment(" ")]
+        background = Style.parse(self.palette.user_background)
+        return Strip(
+            list(Segment.apply_style(segments, post_style=background)), self.width
+        )
+
 
 class ConversationView(ScrollView, can_focus=True):
     """The conversation as one scrolling widget that draws only what shows.
@@ -952,6 +975,9 @@ class ConversationView(ScrollView, can_focus=True):
         self.hi = 0
         self._tops: list[int] = []  # first line of each block in [lo, hi)
         self.renderer: Optional[StripRenderer] = None
+        #: Indexes of the user prompts, in order (for the sticky prompt).
+        self._prompts: list[int] = []
+        self._sticky_cache: dict[int, Strip] = {}
 
     # -- content ----------------------------------------------------------
 
@@ -961,6 +987,8 @@ class ConversationView(ScrollView, can_focus=True):
         self.strips = [None] * len(blocks)
         self.lo = self.hi = 0
         self.renderer = renderer
+        self._prompts = [i for i, b in enumerate(blocks) if b.kind == "user"]
+        self._sticky_cache = {}
         self._relayout()
 
     def add_rendered(self, start: int, rendered: list[list[Strip]]) -> None:
@@ -1033,11 +1061,39 @@ class ConversationView(ScrollView, can_focus=True):
                 y=max(0, top - self.size.height // 3), animate=False, immediate=True
             )
 
+    def sticky_prompt(self) -> Optional[int]:
+        """The prompt to pin at the top, if it has scrolled out of sight.
+
+        It is the last user prompt at or above the block on the top line,
+        once its own first line is above the view. Scrolling up to it lets
+        it go; scrolling past it pins the one before.
+        """
+        top_line = int(self.scroll_offset.y)
+        index = self.block_at(top_line)
+        if index is None or not self._prompts:
+            return None
+        k = bisect_right(self._prompts, index) - 1
+        if k < 0:
+            return None
+        prompt = self._prompts[k]
+        top = self.top_of(prompt)
+        if top is not None and top >= top_line:
+            return None
+        return prompt
+
     # -- drawing ----------------------------------------------------------
 
     def render_line(self, y: int) -> Strip:
         line = int(self.scroll_offset.y) + y
         width = self.size.width
+        if y == 0 and self.renderer is not None:
+            prompt = self.sticky_prompt()
+            if prompt is not None:
+                strip = self._sticky_cache.get(prompt)
+                if strip is None:
+                    strip = self.renderer.sticky(self.blocks[prompt])
+                    self._sticky_cache[prompt] = strip
+                return strip.crop_extend(0, width, self.rich_style)
         index = self.block_at(line)
         if index is None:
             return Strip.blank(width, self.rich_style)
@@ -1046,6 +1102,14 @@ class ConversationView(ScrollView, can_focus=True):
         return strip.crop_extend(0, width, self.rich_style)
 
     def on_click(self, event: Any) -> None:
+        if int(event.y) == 0:
+            prompt = self.sticky_prompt()
+            if prompt is not None:
+                # The pinned prompt takes you to where it was asked.
+                top = self.top_of(prompt)
+                if top is not None:
+                    self.scroll_to(y=top, animate=False, immediate=True)
+                return
         index = self.block_at(int(self.scroll_offset.y) + int(event.y))
         if index is not None and self.blocks[index].collapsible:
             state = self.states[index]

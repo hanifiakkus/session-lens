@@ -207,6 +207,31 @@ async def _open(pilot: Any, app: Any) -> ConversationScreen:
 
 class TestConversationScreen:
     @pytest.mark.asyncio
+    async def test_the_prompt_above_stays_pinned_at_the_top(self, project):
+        """Claude Code pins the prompt that started what is on screen once it
+        scrolls out of sight; scrolling up to it lets it go, and clicking
+        the pinned line goes to it."""
+        project_dir, manager = project
+        app = _Host.make(ConversationScreen(project_dir, SESSION, manager))
+        async with app.run_test(size=(100, 12)) as pilot:
+            screen = await _open(pilot, app)
+            view = screen.view
+            prompt = next(i for i, b in enumerate(screen.blocks) if b.kind == "user")
+            view.scroll_end(animate=False, immediate=True)
+            await pilot.pause()
+            assert view.scroll_y > 0  # at the end, the prompt far above
+            assert view.sticky_prompt() == prompt
+            first = "".join(seg.text for seg in view.render_line(0))
+            assert first.startswith(" > Fix the failing test in app.py")
+
+            await pilot.click(view, offset=(5, 0))
+            await pilot.pause()
+            assert view.scroll_y == view.top_of(prompt)
+            assert view.sticky_prompt() is None
+            first = "".join(seg.text for seg in view.render_line(0))
+            assert first.startswith(" > Fix the failing test")  # the prompt itself
+
+    @pytest.mark.asyncio
     async def test_opens_at_the_end_and_escape_closes(self, project):
         project_dir, manager = project
         app = _Host.make(ConversationScreen(project_dir, SESSION, manager))

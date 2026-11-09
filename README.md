@@ -48,6 +48,11 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
   - Click a long result, a thinking block or a compaction summary to open
     it; `Ctrl+O` opens or closes them all. Claude Code keeps the text of
     only some thinking; one without it says so when opened.
+  - As in Claude Code, the prompt that started what is on screen stays
+    pinned on the top line once it scrolls out of sight; scrolling past it
+    pins the one before. Click the pinned line to go to the prompt.
+  - Headings, lists, inline code and tables are drawn as Claude Code draws
+    them, tables with every border and their cells wrapped to fit.
   - `Ctrl+F` finds text in the conversation: `Enter` or `↓` for the next
     match, `↑` for the previous one. A search result opens at its message
     with the search already run.
