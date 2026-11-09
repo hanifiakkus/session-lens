@@ -124,8 +124,8 @@ class Block:
     """One visual unit of the conversation.
 
     ``kind`` picks the look: ``user``, ``assistant``, ``tool``, ``thinking``,
-    ``compact``, ``note`` (system and command output), ``interrupted`` and
-    ``branch``.
+    ``compact``, ``note`` (system and command output), ``interrupted``,
+    ``bash`` (a ``!`` command) and ``branch``.
     """
 
     kind: str
@@ -144,7 +144,9 @@ class Block:
 
     @property
     def collapsible(self) -> bool:
-        if self.kind in ("thinking", "compact"):
+        if self.kind == "thinking":
+            return True  # an empty one opens to say there is nothing saved
+        if self.kind == "compact":
             return bool(self.body)
         return len(self.body.splitlines()) > self.preview
 
@@ -446,7 +448,7 @@ class _Builder:
             text = _plain(c.stdout).strip()
             return Block(kind="note", body=text) if text else None
         if isinstance(c, BashInputMessage):
-            return Block(kind="user", body=f"! {c.command}", preview=10**9)
+            return Block(kind="bash", body=c.command, preview=10**9)
         if isinstance(c, BashOutputMessage):
             text = _plain("\n".join(t for t in (c.stdout, c.stderr) if t)).strip()
             return Block(kind="note", body=text) if text else None
@@ -530,12 +532,32 @@ def find_matches(blocks: list[Block], query: str) -> list[int]:
 
 @dataclass
 class Palette:
-    """Theme colours as Rich styles, read once on the UI thread."""
+    """Claude Code's colours for the conversation.
 
-    tool_ok: str = "green"
-    tool_error: str = "red"
+    The values are Claude Code's own dark theme (its default), read out of
+    the 2.1 CLI's theme table: ``text``, ``inactive``, ``success``,
+    ``error``, ``userMessageBackground``, ``bashMessageBackgroundColor``,
+    ``bashBorder``, ``diffAdded`` and ``diffRemoved``. Only the find match
+    marker (``current``) follows the TUI theme, like the rest of the chrome.
+    """
+
+    text: str = "rgb(255,255,255)"
+    inactive: str = "rgb(153,153,153)"
+    tool_ok: str = "rgb(78,186,101)"
+    tool_error: str = "rgb(255,107,128)"
+    user_background: str = "on rgb(55,55,55)"
+    bash_background: str = "on rgb(65,60,65)"
+    bash_mark: str = "rgb(253,93,177)"
+    diff_added: str = "on rgb(34,92,43)"
+    diff_removed: str = "on rgb(122,41,54)"
     current: str = "yellow"
-    user_background: str = "on grey15"
+
+
+#: Shown when a thinking block is opened whose text was not kept: Claude
+#: Code stores only a signature for most thinking, so there is nothing to show.
+NO_THINKING_TEXT = "(Claude Code did not save the text of this thinking.)"
+
+_BACKGROUND_KINDS = ("user", "bash")
 
 
 @dataclass
@@ -572,7 +594,8 @@ def _prose(text: str, terms: tuple[str, ...], style: str = "") -> RenderableType
     return Markdown(text, style=style or "none")
 
 
-def _lines(b: Block, state: BlockState, style: str = "dim") -> Text:
+def _lines(b: Block, state: BlockState, palette: Palette, style: str = "") -> Text:
+    style = style or palette.inactive
     lines = b.body.splitlines()
     shown = lines if state.expanded else lines[: b.preview]
     out = Text()
@@ -581,16 +604,19 @@ def _lines(b: Block, state: BlockState, style: str = "dim") -> Text:
             out.append("\n")
         line_style = style
         if b.diff and i > 0:
+            # Claude Code draws diff lines in plain text on a tinted line.
             if line.startswith("+"):
-                line_style = "green"
+                line_style = f"{palette.text} {palette.diff_added}"
             elif line.startswith("-"):
-                line_style = "red"
+                line_style = f"{palette.text} {palette.diff_removed}"
         if b.error:
-            line_style = "red"
+            line_style = palette.tool_error
         out.append_text(_text(line, state.terms, line_style))
     hidden = len(lines) - len(shown)
     if hidden > 0:
-        out.append(f"\n… +{hidden} lines (click to expand)", style="dim italic")
+        out.append(
+            f"\n… +{hidden} lines (click to expand)", style=f"{palette.inactive} italic"
+        )
     return out
 
 
@@ -598,9 +624,11 @@ def block_renderable(b: Block, state: BlockState, palette: Palette) -> Renderabl
     """The Rich renderable for one block, Claude Code's look."""
     terms = state.terms
     if b.kind == "user":
-        return _gutter("> ", _text(b.body, terms), "bold")
+        return _gutter("> ", _text(b.body, terms), palette.inactive)
+    if b.kind == "bash":
+        return _gutter("! ", _text(b.body, terms), palette.bash_mark)
     if b.kind == "assistant":
-        return _gutter("● ", _prose(b.body, terms))
+        return _gutter("● ", _prose(b.body, terms), palette.text)
     if b.kind == "tool":
         name, _, rest = b.title.partition("(")
         head = _text(name, terms, "bold")
@@ -609,24 +637,31 @@ def block_renderable(b: Block, state: BlockState, palette: Palette) -> Renderabl
         dot = palette.tool_error if b.error else palette.tool_ok
         parts: list[RenderableType] = [_gutter("● ", head, dot)]
         if b.body:
-            parts.append(_gutter("  ⎿  ", _lines(b, state), "dim"))
+            parts.append(_gutter("  ⎿  ", _lines(b, state, palette), palette.inactive))
         return Group(*parts)
     if b.kind == "thinking":
-        title = _text(f"✻ {b.title}", terms, "dim italic")
+        title = _text(f"✻ {b.title}", terms, f"{palette.inactive} italic")
         if not state.expanded:
             return title
-        return Group(title, _gutter("  ", _text(b.body, terms, "dim italic")))
+        body = (
+            _text(b.body, terms, f"{palette.inactive} italic")
+            if b.body
+            else Text(NO_THINKING_TEXT, style=f"{palette.inactive} italic")
+        )
+        return Group(title, _gutter("  ", body))
     if b.kind == "compact":
         hint = "" if state.expanded else "  (click for summary)"
-        title = _text(f"✻ {b.title}{hint}", terms, "dim")
+        title = _text(f"✻ {b.title}{hint}", terms, palette.inactive)
         if not state.expanded:
             return title
-        return Group(title, _gutter("  ⎿  ", _prose(b.body, terms, "dim")))
+        return Group(title, _gutter("  ⎿  ", _prose(b.body, terms, palette.inactive)))
     if b.kind == "interrupted":
-        return _gutter("  ⎿  ", _text(b.title, terms, "red"), "dim")
+        return _gutter(
+            "  ⎿  ", _text(b.title, terms, palette.tool_error), palette.inactive
+        )
     if b.kind == "branch":
-        return _text(f"⎇ Branch · {b.title}", terms, "dim italic")
-    return _gutter("  ⎿  ", _lines(b, state), "dim")
+        return _text(f"⎇ Branch · {b.title}", terms, f"{palette.inactive} italic")
+    return _gutter("  ⎿  ", _lines(b, state, palette), palette.inactive)
 
 
 class StripRenderer:
@@ -653,16 +688,23 @@ class StripRenderer:
         inner = self.width - 2
         options = self.console.options.update_width(inner)
         lines = self.console.render_lines(
-            block_renderable(b, state, self.palette), options, pad=True
+            block_renderable(b, state, self.palette),
+            options,
+            style=Style.parse(self.palette.text),
+            pad=True,
         )
         bar = (
             Segment("▌", Style.parse(self.palette.current))
             if state.current
             else Segment(" ")
         )
-        background = (
-            Style.parse(self.palette.user_background) if b.kind == "user" else None
-        )
+        background = None
+        if b.kind in _BACKGROUND_KINDS:
+            background = Style.parse(
+                self.palette.user_background
+                if b.kind == "user"
+                else self.palette.bash_background
+            )
         strips: list[Strip] = []
         for line in lines:
             segments = [bar, *line, Segment(" ")]
@@ -683,7 +725,12 @@ class ConversationView(ScrollView, can_focus=True):
     """
 
     DEFAULT_CSS = """
-    ConversationView { height: 1fr; }
+    /* Claude Code draws on the terminal's own background, in its text colour. */
+    ConversationView {
+        height: 1fr;
+        background: ansi_default;
+        color: rgb(255, 255, 255);
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -911,12 +958,7 @@ class ConversationScreen(ModalScreen[None]):
             except Exception:  # noqa: BLE001 - a missing variable keeps the default
                 return fallback
 
-        return Palette(
-            tool_ok=colour("success", "green"),
-            tool_error=colour("error", "red"),
-            current=colour("accent", "yellow"),
-            user_background="on " + colour("panel", "grey15"),
-        )
+        return Palette(current=colour("accent", "yellow"))
 
     def _content_width(self) -> int:
         # The vertical scrollbar takes two columns.

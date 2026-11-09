@@ -11,6 +11,7 @@ current, runs queries off the UI thread and shows the hits.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 import threading
 import webbrowser
 from datetime import datetime
@@ -323,26 +324,96 @@ def highlighted(text: str, terms: list[str]) -> Text:
     return rich_text
 
 
-def open_session_html(result: fts.SearchResult, query: str, theme: str) -> Path:
-    """Render the hit's session page if needed; return the path opened."""
-    if not result.session_id:
-        raise ValueError("This result has no session")
-    project_dir = Path(result.project_path)
-    page = project_dir / f"session-{result.session_id}.html"
+def open_session_page(
+    project_dir: Path,
+    session_id: str,
+    theme: str,
+    message_uuid: Optional[str] = None,
+    query: str = "",
+) -> Path:
+    """Render a session's HTML page if needed, open it, return its path."""
+    page = project_dir / f"session-{session_id}.html"
     from .renderer import get_renderer
 
     if not page.exists() or get_renderer("html", theme=theme).is_outdated(page):
         page = generate_single_session_file(
-            "html", project_dir, result.session_id, theme=theme
+            "html", project_dir, session_id, theme=theme
         )
     params: list[str] = []
-    if result.message_uuid and result.type not in fts.SESSION_ONLY_TYPES:
-        params.append(f"uuid={quote(result.message_uuid)}")
+    if message_uuid:
+        params.append(f"uuid={quote(message_uuid)}")
     if query.strip():
         params.append(f"q={quote(query)}")
     url = page.as_uri() + ("?" + "&".join(params) if params else "")
     webbrowser.open(url)
     return page
+
+
+def open_session_html(result: fts.SearchResult, query: str, theme: str) -> Path:
+    """Render the hit's session page if needed; return the path opened."""
+    if not result.session_id:
+        raise ValueError("This result has no session")
+    uuid = None
+    if result.message_uuid and result.type not in fts.SESSION_ONLY_TYPES:
+        uuid = result.message_uuid
+    return open_session_page(
+        Path(result.project_path), result.session_id, theme, uuid, query
+    )
+
+
+@dataclass
+class SessionRow:
+    """One session of the archive, as the all-projects list shows it."""
+
+    session_id: str
+    project_path: str
+    name: str
+    first_timestamp: str
+    last_timestamp: str
+    message_count: int
+    tokens: int
+    cwd: str
+
+
+def all_sessions(db_path: Path) -> list[SessionRow]:
+    """Every visible session in the cache, most recently active first."""
+    conn = _connect_readonly(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT s.session_id, p.project_path, s.ai_title, s.summary,"
+            " s.first_user_message, s.first_timestamp, s.last_timestamp,"
+            " s.message_count, s.total_input_tokens, s.total_output_tokens, s.cwd"
+            " FROM sessions s JOIN projects p ON p.id = s.project_id"
+            " WHERE s.hidden = 0"
+            " ORDER BY s.last_timestamp DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        SessionRow(
+            session_id=sid,
+            project_path=proj,
+            name=session_name(ai_title, summary, first_msg),
+            first_timestamp=first or "",
+            last_timestamp=last or "",
+            message_count=int(count or 0),
+            tokens=int(tin or 0) + int(tout or 0),
+            cwd=cwd or "",
+        )
+        for (
+            sid,
+            proj,
+            ai_title,
+            summary,
+            first_msg,
+            first,
+            last,
+            count,
+            tin,
+            tout,
+            cwd,
+        ) in rows
+    ]
 
 
 def _open_html_in_background(

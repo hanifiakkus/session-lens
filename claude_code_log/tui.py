@@ -9,6 +9,7 @@ from typing import Any, ClassVar, List, Optional, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
+from textual.coordinate import Coordinate
 from textual.containers import Container, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -36,7 +37,13 @@ from .converter import (
     load_directory_transcripts,
 )
 from .renderer import get_renderer
-from .session_lens import default_projects_dir, load_theme, save_theme
+from .session_lens import (
+    ALL_PROJECTS,
+    ALL_PROJECTS_LABEL,
+    default_projects_dir,
+    load_theme,
+    save_theme,
+)
 from .tui_search import SearchBar, focus_search_bar
 from .tui_viewer import ConversationScreen
 from .utils import DEFAULT_THEME, normalize_theme
@@ -94,6 +101,7 @@ class ProjectSelector(App[Path]):
         projects: list[Path],
         matching_projects: list[Path],
         archived_projects: Optional[set[Path]] = None,
+        include_all: bool = False,
     ):
         """Initialize the project selector."""
         super().__init__()
@@ -101,6 +109,8 @@ class ProjectSelector(App[Path]):
         self.projects = projects
         self.matching_projects = matching_projects
         self.archived_projects = archived_projects or set()
+        # session-lens: a first row that selects every project at once.
+        self.include_all = include_all
 
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
@@ -140,6 +150,11 @@ class ProjectSelector(App[Path]):
         # Add columns
         table.add_column("Project", width=max(20, self.size.width - 13))
         table.add_column("Sessions", width=10)
+
+        # session-lens: the "all projects" row; its count is filled below.
+        total_sessions = 0
+        if self.include_all:
+            table.add_row(ALL_PROJECTS_LABEL, "")
 
         # Add rows
         for project_path in self.projects:
@@ -181,6 +196,7 @@ class ProjectSelector(App[Path]):
                     project_display,
                     str(session_count),
                 )
+                total_sessions += session_count  # session-lens
             except Exception:
                 # If we can't read cache, show basic info
                 project_display = f"  {project_path.name}"
@@ -193,6 +209,9 @@ class ProjectSelector(App[Path]):
                     project_display,
                     "Unknown",
                 )
+
+        if self.include_all:  # session-lens
+            table.update_cell_at(Coordinate(0, 1), str(total_sessions))
 
     def on_data_table_row_highlighted(self, _event: DataTable.RowHighlighted) -> None:
         """Handle row highlighting (cursor movement) in the projects table."""
@@ -210,6 +229,9 @@ class ProjectSelector(App[Path]):
             if row_data:
                 # Extract project display from the first column
                 project_display = str(row_data[0]).strip()
+                if project_display == ALL_PROJECTS_LABEL.strip():  # session-lens
+                    self.selected_project_path = ALL_PROJECTS
+                    return
 
                 # Remove the arrow indicator if present
                 if project_display.startswith("→"):
@@ -283,6 +305,9 @@ class ProjectSelector(App[Path]):
         if not self.selected_project_path:
             self.notify("No project selected", severity="warning")
             return
+        if self.selected_project_path == ALL_PROJECTS:  # session-lens
+            self.notify("Pick a single project to archive", severity="warning")
+            return
 
         if self._is_project_archived(self.selected_project_path):
             self.notify("Project is already archived", severity="warning")
@@ -346,6 +371,9 @@ class ProjectSelector(App[Path]):
         """Delete the selected project from cache (and optionally JSONL files)."""
         if not self.selected_project_path:
             self.notify("No project selected", severity="warning")
+            return
+        if self.selected_project_path == ALL_PROJECTS:  # session-lens
+            self.notify("Pick a single project to delete", severity="warning")
             return
 
         is_archived = self._is_project_archived(self.selected_project_path)
@@ -411,6 +439,9 @@ class ProjectSelector(App[Path]):
         """Restore all archived sessions in the selected project."""
         if not self.selected_project_path:
             self.notify("No project selected", severity="warning")
+            return
+        if self.selected_project_path == ALL_PROJECTS:  # session-lens
+            self.notify("Pick a single project to restore", severity="warning")
             return
 
         if not self._is_project_archived(self.selected_project_path):
@@ -2192,13 +2223,16 @@ def run_project_selector(
     projects: list[Path],
     matching_projects: list[Path],
     archived_projects: Optional[set[Path]] = None,
+    include_all: bool = False,
 ) -> Optional[Path]:
     """Run the project selector TUI and return the selected project path."""
     if not projects:
         print("Error: No projects provided")
         return None
 
-    app = ProjectSelector(projects, matching_projects, archived_projects)
+    app = ProjectSelector(
+        projects, matching_projects, archived_projects, include_all=include_all
+    )
     try:
         return app.run()
     except KeyboardInterrupt:

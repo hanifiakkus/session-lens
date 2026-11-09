@@ -16,8 +16,14 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
 
 ## What session-lens adds
 
-- **`session-lens` (or the short `slens`) opens the TUI** — no flags needed. Every other subcommand and
-  flag works as upstream (`session-lens serve`, `session-lens --open-browser`, …).
+- **`session-lens` (or the short `slens`) opens the TUI** — no flags
+  needed — on **every project's sessions at once**, newest first, wherever
+  you start it. `Esc` goes to the project selector: its first row,
+  **★ ALL projects**, comes back to all of them; any other row opens that
+  one project (where archive/delete/restore live). Every other subcommand
+  and flag works as upstream (`session-lens serve`,
+  `session-lens --open-browser`, `session-lens --tui` for upstream's
+  per-directory start, …).
 - **Search bar in the TUI** — one line under the project and session
   lists' header. Press `Ctrl+F` (or `/`), or click it, and type: results
   appear as you type, with the matches highlighted. `Ctrl+F` on the results
@@ -34,10 +40,12 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
   (or on a search result) opens it full screen as Claude Code's chat screen
   draws it: your prompts behind `>`, Claude's replies behind `●`, each tool
   call as `● Bash(…)` with its result under `⎿` cut to a few lines, and
-  thinking as `✻ Thinking…`. Everything compaction hid is there too, behind
-  `✻ Conversation compacted`.
+  thinking as `✻ Thinking…`, in Claude Code's own (dark theme) colours on
+  your terminal's background. Everything compaction hid is there too,
+  behind `✻ Conversation compacted`.
   - Click a long result, a thinking block or a compaction summary to open
-    it; `Ctrl+O` opens or closes them all.
+    it; `Ctrl+O` opens or closes them all. Claude Code keeps the text of
+    only some thinking; one without it says so when opened.
   - `Ctrl+F` finds text in the conversation: `Enter` or `↓` for the next
     match, `↑` for the previous one. A search result opens at its message
     with the search already run.

@@ -308,3 +308,48 @@ class TestOpeningFromTheSessionList:
             await pilot.press("d")
             await pilot.pause()
             assert app.screen is screen
+
+
+class TestClaudeCodeLook:
+    def _strips(self, block: Block, **state: Any):
+        from claude_code_log.tui_viewer import BlockState, Palette, StripRenderer
+
+        return StripRenderer(80, Palette()).render(block, BlockState(**state))
+
+    @staticmethod
+    def _styles(strips: Any):
+        return [seg.style for strip in strips for seg in strip if seg.style]
+
+    def test_user_prompt_sits_on_claude_codes_grey(self):
+        styles = self._styles(self._strips(Block(kind="user", body="hello")))
+        assert any(
+            s.bgcolor and s.bgcolor.triplet and tuple(s.bgcolor.triplet) == (55, 55, 55)
+            for s in styles
+        )
+
+    def test_tool_dot_is_claude_codes_green_or_red(self):
+        ok = self._styles(self._strips(Block(kind="tool", title="Bash(ls)")))
+        bad = self._styles(
+            self._strips(Block(kind="tool", title="Bash(ls)", error=True))
+        )
+
+        def has(styles: Any, rgb: tuple[int, int, int]) -> bool:
+            return any(
+                s.color and s.color.triplet and tuple(s.color.triplet) == rgb
+                for s in styles
+            )
+
+        assert has(ok, (78, 186, 101))
+        assert has(bad, (255, 107, 128))
+
+    def test_an_empty_thinking_still_opens_and_says_why(self):
+        from claude_code_log.tui_viewer import NO_THINKING_TEXT
+
+        block = Block(kind="thinking", title="Thinking…", body="")
+        assert block.collapsible
+        closed = "".join(seg.text for strip in self._strips(block) for seg in strip)
+        opened = "".join(
+            seg.text for strip in self._strips(block, expanded=True) for seg in strip
+        )
+        assert NO_THINKING_TEXT not in closed
+        assert NO_THINKING_TEXT in opened
