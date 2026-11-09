@@ -65,7 +65,8 @@ class ProjectSelector(App[Path]):
         Binding("a", "archive_project", "Archive Project"),
         Binding("d", "delete_project", "Delete Project"),
         Binding("r", "restore_project", "Restore Project"),
-        Binding("slash", "focus_search", "Search"),  # session-lens
+        Binding("ctrl+f", "focus_search", "Search"),  # session-lens
+        Binding("slash", "focus_search", "Search", show=False),  # session-lens
     ]
 
     selected_project_path: reactive[Optional[Path]] = reactive(
@@ -103,7 +104,6 @@ class ProjectSelector(App[Path]):
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
         yield Header()
-        yield SearchBar(self._search_projects_dir())  # session-lens
 
         with Container(id="main-container"):
             with Vertical():
@@ -115,6 +115,8 @@ class ProjectSelector(App[Path]):
                             f", {len(self.matching_projects)} match current directory"
                         )
                     yield Label(info_text, id="info")
+
+                yield SearchBar(self._search_projects_dir())  # session-lens
 
                 # Project table
                 yield DataTable[str](id="projects-table", cursor_type="row")
@@ -1297,7 +1299,8 @@ class SessionBrowser(App[Optional[str]]):
         Binding("e", "toggle_expanded", "Toggle Expanded View"),
         Binding("p", "back_to_projects", "Open Project Selector"),
         Binding("?", "toggle_help", "Help"),
-        Binding("slash", "focus_search", "Search"),  # session-lens
+        Binding("ctrl+f", "focus_search", "Search"),  # session-lens
+        Binding("slash", "focus_search", "Search", show=False),  # session-lens
     ]
 
     selected_session_id: reactive[Optional[str]] = reactive(cast(Optional[str], None))
@@ -1338,15 +1341,16 @@ class SessionBrowser(App[Optional[str]]):
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
         yield Header()
-        yield SearchBar(  # session-lens
-            self.project_path.parent, self.project_path, self.html_theme
-        )
 
         with Container(id="main-container"):
             with Vertical():
                 # Project statistics
                 with Container(id="stats-container"):
                     yield Label("Loading project information...", id="stats")
+
+                yield SearchBar(  # session-lens
+                    self.project_path.parent, self.project_path, self.html_theme
+                )
 
                 # Session table
                 yield DataTable[str](id="sessions-table", cursor_type="row")

@@ -18,14 +18,18 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
 
 - **`session-lens` (or the short `slens`) opens the TUI** — no flags needed. Every other subcommand and
   flag works as upstream (`session-lens serve`, `session-lens --open-browser`, …).
-- **Search bar in the TUI** — always at the top of the project and session
-  lists. Press `/` and type: results appear as you type, ranked by relevance,
-  with the matches highlighted.
-  - `Enter` on a result shows the whole message.
-  - `o` opens the session in the browser, scrolled to that message.
+- **Search bar in the TUI** — one line under the project and session
+  lists' header. Press `Ctrl+F` (or `/`), or click it, and type: results
+  appear as you type, with the matches highlighted. `Ctrl+F` on the results
+  takes you back to the box.
+  - By default it searches **session names** (the title the list shows),
+    newest first. `Enter` opens the session in the browser.
+  - `Ctrl+R` switches to **message content**: full-text search over every
+    message, ranked by relevance. `Enter` shows the whole message, `o` opens
+    the session in the browser scrolled to it.
   - `Ctrl+T` switches between the current project and all projects.
-  - The first search brings the cache and the index up to date; after that
-    it only reads what changed.
+  - The first search brings the cache up to date (and, for message content,
+    builds the search index); after that it only reads what changed.
 - **Remembered theme** — pick a theme with `Ctrl+P` → *Change theme*; it is
   saved to `~/.config/session-lens/tui-theme`.
 - **Minimal HTML theme by default** (override with `--theme classic` or
