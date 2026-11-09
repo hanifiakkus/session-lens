@@ -33,6 +33,8 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
   - `Ctrl+R` switches to **message content**: full-text search over every
     message, ranked by relevance. `Enter` shows the whole message, `o` opens
     the session in the browser scrolled to it.
+  - Each result shows its session's size: message count, tokens and the
+    transcript's size on disk.
   - `Ctrl+T` switches between the current project and all projects.
   - The first search brings the cache up to date (and, for message content,
     builds the search index); after that it only reads what changed.

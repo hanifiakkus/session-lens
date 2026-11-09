@@ -664,15 +664,62 @@ def block_renderable(b: Block, state: BlockState, palette: Palette) -> Renderabl
     return _gutter("  ⎿  ", _lines(b, state, palette), palette.inactive)
 
 
+#: Textual's own dim factor (``textual.filter.DIM_FACTOR``).
+_DIM_FACTOR = 0.66
+#: What "dim" blends towards where a segment has no background of its own.
+#: The conversation sits on the terminal's background, which Textual cannot
+#: read (blending towards it crashes); Claude Code's dark theme assumes a
+#: dark one, so black.
+_DIM_TOWARDS = (0, 0, 0)
+
+
+def undim(segments: list[Any], text: tuple[int, int, int]) -> list[Any]:
+    """Turn ``dim`` into the colour it means, so no dim reaches Textual.
+
+    Rich styles some things dim by itself (Rich 15 draws a Markdown rule
+    dim), and Textual resolves dim by blending towards the background,
+    which is the terminal's own here and has no colour: it raised.
+    """
+    from rich.color import Color as RichColor
+    from rich.segment import Segment
+    from rich.style import Style
+
+    out: list[Any] = []
+    for seg in segments:
+        style = seg.style
+        if style is None or not style.dim:
+            out.append(seg)
+            continue
+        fg = style.color.triplet if style.color and style.color.triplet else text
+        bg = (
+            style.bgcolor.triplet
+            if style.bgcolor and style.bgcolor.triplet
+            else _DIM_TOWARDS
+        )
+        mixed = tuple(
+            int(b + (f - b) * _DIM_FACTOR) for f, b in zip(tuple(fg), tuple(bg))
+        )
+        colour = RichColor.from_rgb(*mixed)
+        out.append(
+            Segment(seg.text, style + Style(color=colour, dim=False), seg.control)
+        )
+    return out
+
+
 class StripRenderer:
     """Renders blocks to terminal lines; safe to use off the UI thread."""
 
     def __init__(self, width: int, palette: Palette) -> None:
+        import io
+
         from rich.console import Console
 
         self.width = max(20, width)
         self.palette = palette
         self.console = Console(
+            # Its own file: while Textual runs, stdout is Textual's capture,
+            # and Rich, reading no encoding from it, fell back to ASCII.
+            file=io.StringIO(),
             width=self.width,
             color_system="truecolor",
             force_terminal=True,
@@ -705,12 +752,19 @@ class StripRenderer:
                 if b.kind == "user"
                 else self.palette.bash_background
             )
+        text_rgb = Style.parse(self.palette.text).color
+        triplet = text_rgb.triplet if text_rgb is not None else None
+        text = (
+            (triplet.red, triplet.green, triplet.blue)
+            if triplet is not None
+            else (255, 255, 255)
+        )
         strips: list[Strip] = []
         for line in lines:
             segments = [bar, *line, Segment(" ")]
             if background is not None:
                 segments = list(Segment.apply_style(segments, post_style=background))
-            strips.append(Strip(segments, self.width))
+            strips.append(Strip(undim(segments, text), self.width))
         strips.append(Strip.blank(self.width))  # the gap Claude Code leaves
         return strips
 

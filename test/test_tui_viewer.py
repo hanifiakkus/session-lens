@@ -353,3 +353,24 @@ class TestClaudeCodeLook:
         )
         assert NO_THINKING_TEXT not in closed
         assert NO_THINKING_TEXT in opened
+
+    def test_no_dim_reaches_textual(self):
+        """Rich 15 draws a Markdown rule dim; Textual cannot dim against the
+        terminal's own background and crashed. Every dim is resolved first."""
+        from rich.theme import Theme
+
+        from claude_code_log.tui_viewer import BlockState, Palette, StripRenderer
+
+        renderer = StripRenderer(80, Palette())
+        renderer.console.push_theme(Theme({"markdown.hr": "dim"}))
+        block = Block(
+            kind="assistant",
+            body="before\n\n---\n\nafter",
+            markdown=True,
+            preview=10**9,
+        )
+        strips = renderer.render(block, BlockState())
+        segments = [seg for strip in strips for seg in strip]
+        # The rule is there (Rich 14 draws it with "─", Rich 15 with "-").
+        assert any("───" in seg.text or "---" in seg.text for seg in segments)
+        assert not any(seg.style and seg.style.dim for seg in segments)

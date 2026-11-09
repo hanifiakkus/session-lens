@@ -362,6 +362,70 @@ def open_session_html(result: fts.SearchResult, query: str, theme: str) -> Path:
 
 
 @dataclass
+class SessionStats:
+    """How big a session is, for the search results' columns."""
+
+    messages: int = 0
+    tokens: int = 0
+    #: Bytes of the session's transcript file; None when it is gone.
+    size: Optional[int] = None
+
+
+def session_stats(
+    db_path: Path, results: list[fts.SearchResult]
+) -> dict[str, SessionStats]:
+    """Message count, tokens and transcript size of each hit's session."""
+    ids = sorted({r.session_id for r in results if r.session_id})
+    stats: dict[str, SessionStats] = {}
+    if not ids:
+        return stats
+    conn = _connect_readonly(db_path)
+    try:
+        for start in range(0, len(ids), 500):  # under SQLite's parameter cap
+            chunk = ids[start : start + 500]
+            marks = ",".join("?" * len(chunk))
+            for sid, messages, tin, tout in conn.execute(
+                "SELECT session_id, message_count, total_input_tokens,"
+                f" total_output_tokens FROM sessions WHERE session_id IN ({marks})",
+                chunk,
+            ):
+                stats[sid] = SessionStats(
+                    messages=int(messages or 0), tokens=int(tin or 0) + int(tout or 0)
+                )
+    finally:
+        conn.close()
+    for r in results:
+        if r.session_id and r.session_id in stats and stats[r.session_id].size is None:
+            try:
+                path = Path(r.project_path) / f"{r.session_id}.jsonl"
+                stats[r.session_id].size = path.stat().st_size
+            except OSError:
+                pass
+    return stats
+
+
+def format_size(size: Optional[int]) -> str:
+    """``734 B``, ``12.4 KB``, ``3.1 MB``; ``-`` when unknown."""
+    if size is None:
+        return "-"
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GB"
+
+
+def format_count(value: int) -> str:
+    """``950``, ``12.3k``, ``4.1M``: tokens in a narrow column."""
+    if value < 1000:
+        return str(value)
+    if value < 1_000_000:
+        return f"{value / 1000:.1f}k"
+    return f"{value / 1_000_000:.1f}M"
+
+
+@dataclass
 class SessionRow:
     """One session of the archive, as the all-projects list shows it."""
 
@@ -490,6 +554,7 @@ class SearchScreen(ModalScreen[None]):
         self._index_ready = False
         self._shown_full_text = False
         self.results: list[fts.SearchResult] = []
+        self.stats: dict[str, SessionStats] = {}
         self._query = initial_query
         self._debounce: Optional[Timer] = None
         # Enter in the box means "take me to the results"; they arrive from a
@@ -522,7 +587,14 @@ class SearchScreen(ModalScreen[None]):
         self._prepare()
 
     #: Fixed columns: date, project, type. The match column gets the rest.
-    _FIXED_COLUMNS = (("Date", 16), ("Project", 26), ("Type", 10))
+    _FIXED_COLUMNS = (
+        ("Date", 16),
+        ("Project", 22),
+        ("Type", 8),
+        ("Msgs", 6),
+        ("Tokens", 7),
+        ("Size", 8),
+    )
 
     def _match_width(self) -> int:
         # Each column carries one cell of padding per side; leave room for
@@ -644,19 +716,25 @@ class SearchScreen(ModalScreen[None]):
                 results = run_search(db_path, query, project_path)
             else:
                 results = run_title_search(db_path, query, project_path)
+            stats = session_stats(db_path, results)
         except sqlite3.Error as e:
             if not worker.is_cancelled:
                 _app_of(self).call_from_thread(self._status, f"Query error: {e}")
             return
         if not worker.is_cancelled:
-            _app_of(self).call_from_thread(self._show, query, results, full_text)
+            _app_of(self).call_from_thread(self._show, query, results, full_text, stats)
 
     def _show(
-        self, query: str, results: list[fts.SearchResult], full_text: bool
+        self,
+        query: str,
+        results: list[fts.SearchResult],
+        full_text: bool,
+        stats: Optional[dict[str, SessionStats]] = None,
     ) -> None:
         if query != self._query or full_text != self.full_text:
             return  # a newer query (or the other mode's) is on its way
         self.results = results
+        self.stats = stats or {}
         self._fill_rows(full_text)
         table = cast("DataTable[Text | str]", self.query_one(DataTable))
         if self._focus_results and results:
@@ -666,9 +744,8 @@ class SearchScreen(ModalScreen[None]):
             self._status("No results.")
         else:
             more = "+" if len(results) >= RESULT_LIMIT else ""
-            enter = "show message" if full_text else "open in browser"
             self._status(
-                f"{len(results)}{more} results  ·  Enter: {enter}"
+                f"{len(results)}{more} results  ·  Enter: read"
                 "  ·  o: open in browser  ·  Ctrl+F: back to search"
             )
 
@@ -682,10 +759,14 @@ class SearchScreen(ModalScreen[None]):
         for i, r in enumerate(self.results):
             match = mark(r.snippet, terms)
             match.truncate(width, overflow="ellipsis")
+            st = self.stats.get(r.session_id or "")
             table.add_row(
                 format_timestamp(r.timestamp),
                 project_label(r.project_path),
                 r.type,
+                Text(str(st.messages) if st else "-", justify="right"),
+                Text(format_count(st.tokens) if st else "-", justify="right"),
+                Text(format_size(st.size) if st else "-", justify="right"),
                 match,
                 key=str(i),
             )

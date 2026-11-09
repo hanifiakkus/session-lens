@@ -202,3 +202,41 @@ class TestAllRowIsNotAProject:
             await pilot.pause()
             # No confirmation screen: still on the selector's own screen.
             assert len(app.screen_stack) == 1
+
+
+class TestSearchResultStats:
+    def test_each_hit_carries_its_sessions_size(self, archive):
+        from claude_code_log.tui_search import run_title_search, session_stats
+
+        projects, db = archive
+        results = run_title_search(db, "prompt", None)
+        stats = session_stats(db, results)
+        new = stats[NEW]
+        assert new.tokens == 7
+        assert new.messages >= 2
+        assert new.size == (projects / "-work-beta" / f"{NEW}.jsonl").stat().st_size
+
+    @pytest.mark.asyncio
+    async def test_the_results_table_shows_them(self, archive):
+        from textual.widgets import DataTable
+
+        from claude_code_log.tui_search import SearchScreen
+
+        projects, db = archive
+        app = AllSessionsBrowser(projects, db)
+        async with app.run_test(size=(160, 30)) as pilot:
+            await pilot.pause(0.2)
+            await pilot.press("ctrl+f", *"beta")
+            for _ in range(60):
+                await pilot.pause(0.05)
+                screen = app.screen
+                if isinstance(screen, SearchScreen) and screen.results:
+                    break
+            screen = app.screen
+            assert isinstance(screen, SearchScreen)
+            table = screen.query_one("#search-results", DataTable)
+            labels = [str(c.label) for c in table.columns.values()]
+            assert labels[3:6] == ["Msgs", "Tokens", "Size"]
+            row = [str(cell) for cell in table.get_row_at(0)]
+            assert row[4] == "7"
+            assert row[5].endswith(" B")

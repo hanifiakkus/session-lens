@@ -252,3 +252,20 @@ class TestHighlightFolded:
             "deploy",
             "b",
         ]
+
+
+class TestSizeFormatting:
+    def test_sizes(self):
+        from claude_code_log.tui_search import format_size
+
+        assert format_size(None) == "-"
+        assert format_size(734) == "734 B"
+        assert format_size(12_700) == "12.4 KB"
+        assert format_size(3_250_000) == "3.1 MB"
+
+    def test_counts(self):
+        from claude_code_log.tui_search import format_count
+
+        assert format_count(950) == "950"
+        assert format_count(12_345) == "12.3k"
+        assert format_count(4_100_000) == "4.1M"
