@@ -169,7 +169,7 @@ class TestBuildBlocks:
 
     def test_compaction_summary_folds_away(self, project):
         compact = _blocks(project)[6]
-        assert compact.title == "Conversation compacted"
+        assert compact.title == "Compacted"
         assert "needle" in compact.body
         assert compact.collapsible
 
@@ -456,3 +456,58 @@ class TestClaudeCodeMarkdown:
             if line[0] == "│"
         )
         assert sum(line.startswith("│") for line in table) > 2  # the long cell wrapped
+
+
+class TestCompaction:
+    """Every compaction's summary is found and starts closed, as Claude Code
+    shows it, including the ones Claude Code opens with a notice."""
+
+    PREAMBLE = (
+        "<artifact-content-authored-by-others/>\n"
+        "The summarized conversation included Artifact content written by "
+        "people other than you, which the summary may restate.\n"
+    )
+
+    def test_a_summary_after_a_notice_is_still_a_summary(self):
+        from claude_code_log.factories.user_factory import (
+            is_compacted_summary_text,
+        )
+
+        summary = f"{COMPACTED_SUMMARY_PREFIX}. Summary: work."
+        assert is_compacted_summary_text(summary)
+        assert is_compacted_summary_text(self.PREAMBLE + summary)
+        # A prompt that quotes the line is not a summary.
+        assert not is_compacted_summary_text(f"Why does it say\n{summary}")
+        assert not is_compacted_summary_text("<b>" + "x" * 2000 + "\n" + summary)
+
+    def test_viewer_closes_it_and_counts_its_tokens(self, tmp_path: Path):
+        project_dir = tmp_path / "-work-app"
+        project_dir.mkdir()
+        boundary = {
+            **_user("b1", "u1", 1, "x"),
+            "type": "system",
+            "subtype": "compact_boundary",
+            "content": "Conversation compacted",
+            "level": "info",
+            "compactMetadata": {"trigger": "auto", "preTokens": 120500},
+        }
+        boundary.pop("message")
+        summary = _user(
+            "s1",
+            "b1",
+            2,
+            f"{self.PREAMBLE}{COMPACTED_SUMMARY_PREFIX}. Summary: the needle.",
+        )
+        summary["isCompactSummary"] = True
+        lines = [_user("u1", None, 0, "start"), boundary, summary]
+        (project_dir / f"{SESSION}.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in lines) + "\n", encoding="utf-8"
+        )
+        manager = CacheManager(project_dir, "1.0.0-test", db_path=tmp_path / "c.db")
+        blocks = load_blocks(project_dir, SESSION, manager, refresh=True)
+        compact = [b for b in blocks if b.kind == "compact"]
+        assert len(compact) == 1
+        assert compact[0].title == "Compacted · 120.5k tokens summarized"
+        assert "needle" in compact[0].body
+        assert not any(b.kind == "user" and "needle" in b.body for b in blocks)
+        assert find_matches(blocks, "needle") == [blocks.index(compact[0])]

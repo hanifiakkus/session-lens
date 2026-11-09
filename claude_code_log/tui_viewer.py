@@ -379,6 +379,14 @@ def _is_hidden(msg: TemplateMessage) -> bool:
     return msg.meta.is_sidechain or msg.agent_depth > 0 or msg.in_workflow_sidechannel
 
 
+def _tokens(n: int) -> str:
+    """A token count as Claude Code writes one: 950, 12.3k, 1.2m."""
+    for size, unit in ((1_000_000, "m"), (1_000, "k")):
+        if n >= size:
+            return f"{n / size:.1f}".removesuffix(".0") + unit
+    return str(n)
+
+
 class _Builder:
     def __init__(self, ctx: RenderingContext) -> None:
         from .markdown.renderer import MarkdownRenderer
@@ -387,6 +395,8 @@ class _Builder:
         self.md = MarkdownRenderer(image_export_mode="placeholder")
         self.md._ctx = ctx  # pyright: ignore[reportPrivateUsage]
         self.blocks: list[Block] = []
+        #: Tokens the last compaction boundary summarized, for its summary.
+        self.compacted_tokens: Optional[int] = None
 
     def markdown_of(self, msg: TemplateMessage) -> str:
         try:
@@ -472,14 +482,20 @@ class _Builder:
         if isinstance(c, ThinkingMessage):
             return Block(kind="thinking", title="Thinking…", body=c.thinking.strip())
         if isinstance(c, CompactedSummaryMessage):
+            # Claude Code's line: "Compacted · 120.5k tokens summarized".
+            tokens, self.compacted_tokens = self.compacted_tokens, None
+            title = "Compacted"
+            if tokens:
+                title += f" · {_tokens(tokens)} tokens summarized"
             return Block(
                 kind="compact",
-                title="Conversation compacted",
+                title=title,
                 body=c.summary_text.strip(),
                 markdown=True,
             )
         if isinstance(c, SystemMessage):
             if c.compact_trigger is not None or c.compact_pre_tokens is not None:
+                self.compacted_tokens = c.compact_pre_tokens
                 return None  # the summary that follows says it
             if c.level == "info":
                 return None  # hook chatter Claude Code does not keep
@@ -803,7 +819,7 @@ def block_renderable(b: Block, state: BlockState, palette: Palette) -> Renderabl
         )
         return Group(title, _gutter("  ", body))
     if b.kind == "compact":
-        hint = "" if state.expanded else "  (click for summary)"
+        hint = "" if state.expanded else " (click for the summary)"
         title = _text(f"✻ {b.title}{hint}", terms, palette.inactive)
         if not state.expanded:
             return title

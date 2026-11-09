@@ -44,7 +44,7 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
   call as `● Bash(…)` with its result under `⎿` cut to a few lines, and
   thinking as `✻ Thinking…`, in Claude Code's own (dark theme) colours on
   your terminal's background. Everything compaction hid is there too,
-  behind `✻ Conversation compacted`.
+  behind `✻ Compacted`, closed until you click it.
   - Click a long result, a thinking block or a compaction summary to open
     it; `Ctrl+O` opens or closes them all. Claude Code keeps the text of
     only some thinking; one without it says so when opened.

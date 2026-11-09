@@ -395,6 +395,25 @@ def create_ide_notification_content(text: str) -> Optional[IdeNotificationConten
 # Pattern for compacted session summary detection
 COMPACTED_SUMMARY_PREFIX = "This session is being continued from a previous conversation that ran out of context"
 
+#: How far into the text a preamble may push the summary's opening line.
+_COMPACTED_PREAMBLE_MAX = 1000
+
+
+def is_compacted_summary_text(text: str) -> bool:
+    """Whether ``text`` is a compaction's summary.
+
+    Claude Code may put a notice before the summary's opening line, opened
+    by a tag (``<artifact-content-authored-by-others/>`` and a sentence on
+    restated content, from 2.1.3xx), so the line is looked for at the start
+    of a line within that preamble, not only at the very start.
+    """
+    if text.startswith(COMPACTED_SUMMARY_PREFIX):
+        return True
+    if not text.startswith("<"):
+        return False
+    at = text.find("\n" + COMPACTED_SUMMARY_PREFIX, 0, _COMPACTED_PREAMBLE_MAX)
+    return at != -1
+
 
 def create_compacted_summary_message(
     meta: MessageMeta,
@@ -405,8 +424,9 @@ def create_compacted_summary_message(
     Compacted summaries are generated when a session runs out of context and
     needs to be continued. They contain a summary of the previous conversation.
 
-    If the first text item starts with the compacted summary prefix, all text
-    items are combined into a single CompactedSummaryMessage.
+    If the first text item is a compacted summary (see
+    ``is_compacted_summary_text``), all text items are combined into a
+    single CompactedSummaryMessage.
 
     Args:
         content_list: List of ContentItem from user message
@@ -419,7 +439,7 @@ def create_compacted_summary_message(
         return None
 
     first_text = content_list[0].text
-    if not first_text.startswith(COMPACTED_SUMMARY_PREFIX):
+    if not is_compacted_summary_text(first_text):
         return None
 
     # Combine all text content for compacted summaries
