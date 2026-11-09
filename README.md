@@ -30,6 +30,21 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
   - `Ctrl+T` switches between the current project and all projects.
   - The first search brings the cache up to date (and, for message content,
     builds the search index); after that it only reads what changed.
+- **Read a session the way Claude Code shows it** — `Enter` on a session
+  (or on a search result) opens it full screen as Claude Code's chat screen
+  draws it: your prompts behind `>`, Claude's replies behind `●`, each tool
+  call as `● Bash(…)` with its result under `⎿` cut to a few lines, and
+  thinking as `✻ Thinking…`. Everything compaction hid is there too, behind
+  `✻ Conversation compacted`.
+  - Click a long result, a thinking block or a compaction summary to open
+    it; `Ctrl+O` opens or closes them all.
+  - `Ctrl+F` finds text in the conversation: `Enter` or `↓` for the next
+    match, `↑` for the previous one. A search result opens at its message
+    with the search already run.
+  - `Esc` closes the find box, then the conversation. `h` still opens the
+    session's HTML page.
+  - Long sessions open at once: the end (or the message you opened) is
+    drawn first, the rest in the background.
 - **Remembered theme** — pick a theme with `Ctrl+P` → *Change theme*; it is
   saved to `~/.config/session-lens/tui-theme`.
 - **Minimal HTML theme by default** (override with `--theme classic` or

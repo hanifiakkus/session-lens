@@ -37,7 +37,8 @@ from .converter import (
 )
 from .renderer import get_renderer
 from .session_lens import default_projects_dir, load_theme, save_theme
-from .tui_search import SearchBar, focus_search_bar
+from .tui_search import SearchBar, focus_search_bar, session_name
+from .tui_viewer import ConversationScreen, format_session_title
 from .utils import DEFAULT_THEME, normalize_theme
 from .utils import atomic_write_text, get_project_display_name
 
@@ -1284,7 +1285,8 @@ class SessionBrowser(App[Optional[str]]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
         Binding("escape", "back_to_projects", "Back", show=False),
-        Binding("enter", "export_selected", "Open HTML", show=False),
+        # session-lens: Enter reads the session in the TUI; h opens HTML.
+        Binding("enter", "view_session", "View"),
         Binding("a", "archive_session", "Archive Session"),
         Binding("h", "export_selected", "Open HTML page"),
         Binding("m", "export_markdown", "Open Markdown"),
@@ -1646,6 +1648,39 @@ class SessionBrowser(App[Optional[str]]):
                 return dt.strftime("%Y-%m-%d %H:%M")
         except (ValueError, AttributeError):
             return "Unknown"
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on a session reads it in the TUI (session-lens)."""
+        table = cast(DataTable[str], event.data_table)  # pyright: ignore[reportUnknownMemberType]
+        if table.id == "sessions-table":
+            self._update_selected_session_from_cursor()
+            self.action_view_session()
+
+    def action_view_session(self) -> None:
+        """Open the selected session full screen, drawn like Claude Code."""
+        session_id = self.selected_session_id
+        if not session_id:
+            self.notify("No session selected", severity="warning")
+            return
+        data = self.sessions.get(session_id) or self.archived_sessions.get(session_id)
+        name = (
+            session_name(data.ai_title, data.summary, data.first_user_message)
+            if data
+            else ""
+        )
+        archived = self.is_archived_project or session_id in self.archived_sessions
+        self.push_screen(
+            ConversationScreen(
+                self.project_path,
+                session_id,
+                self.cache_manager,
+                title=format_session_title(
+                    name or f"Session {session_id[:8]}",
+                    data.first_timestamp if data else None,
+                ),
+                refresh=not archived,
+            )
+        )
 
     def on_data_table_row_highlighted(self, _event: DataTable.RowHighlighted) -> None:
         """Handle row highlighting (cursor movement) in the sessions table."""

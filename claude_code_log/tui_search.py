@@ -22,7 +22,6 @@ from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Container, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.timer import Timer
 from textual.widgets import DataTable, Footer, Input, Static
@@ -38,6 +37,7 @@ from .cache import (
 )
 from .converter import ensure_fresh_cache, generate_single_session_file
 from .migrations.runner import apply_write_pragmas, cache_busy_timeout
+from .tui_viewer import ConversationScreen, format_session_title
 from .utils import DEFAULT_THEME, best_working_dir
 
 #: Rows fetched per query. FTS5 ranks by relevance, so the first page is the
@@ -290,19 +290,6 @@ def run_title_search(
     return results
 
 
-def load_message_fields(db_path: Path, message_id: int) -> dict[str, str]:
-    conn = _connect_readonly(db_path)
-    try:
-        row = conn.execute(
-            "SELECT content FROM messages WHERE id = ?", (message_id,)
-        ).fetchone()
-    finally:
-        conn.close()
-    if row is None:
-        return {}
-    return fts.extract_search_text(fts.decode_entry(row[0]))
-
-
 def project_label(project_path: str) -> str:
     """``-home-me-projects-x`` -> ``~/projects/x``."""
     slug = fts.project_slug(project_path)
@@ -358,88 +345,6 @@ def open_session_html(result: fts.SearchResult, query: str, theme: str) -> Path:
     return page
 
 
-class MessageDetailScreen(ModalScreen[None]):
-    """The whole matched message, every field, with the terms highlighted."""
-
-    CSS = """
-    MessageDetailScreen { align: center middle; }
-    #detail-box {
-        width: 92%;
-        height: 90%;
-        border: solid $primary;
-        background: $surface;
-    }
-    #detail-header {
-        dock: top;
-        height: auto;
-        padding: 0 1;
-        background: $primary;
-        color: $text;
-    }
-    #detail-body { padding: 0 1; }
-    .field-title { color: $accent; text-style: bold; margin-top: 1; }
-    #detail-footer {
-        dock: bottom;
-        height: 1;
-        padding: 0 1;
-        background: $panel;
-        color: $text-muted;
-    }
-    """
-
-    BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("escape,q", "dismiss", "Close"),
-        Binding("o", "open_html", "Open in browser"),
-    ]
-
-    def __init__(
-        self,
-        result: fts.SearchResult,
-        fields: dict[str, str],
-        terms: list[str],
-        query: str,
-        theme: str,
-    ) -> None:
-        super().__init__()
-        self.result = result
-        self.fields = fields
-        self.terms = terms
-        self.search_query = query
-        self.html_theme = theme
-
-    def compose(self) -> ComposeResult:
-        r = self.result
-        header = (
-            f"{project_label(r.project_path)}  ·  {format_timestamp(r.timestamp)}"
-            f"  ·  {r.type}  ·  session {(r.session_id or '-')[:8]}"
-        )
-        with Container(id="detail-box"):
-            yield Static(header, id="detail-header")
-            with VerticalScroll(id="detail-body"):
-                shown = False
-                for name in fts.SEARCH_FIELDS:
-                    value = self.fields.get(name)
-                    if not value:
-                        continue
-                    shown = True
-                    yield Static(
-                        fts.SEARCH_FIELD_LABELS.get(name, name), classes="field-title"
-                    )
-                    yield Static(highlighted(value, self.terms))
-                if not shown:
-                    yield Static("(This message has no text to show)")
-            yield Static(
-                "Esc: close  ·  o: open the session in the browser at this message",
-                id="detail-footer",
-            )
-
-    async def action_dismiss(self, result: None = None) -> None:
-        self.dismiss(result)
-
-    def action_open_html(self) -> None:
-        _open_html_in_background(self, self.result, self.search_query, self.html_theme)
-
-
 def _open_html_in_background(
     screen: "Screen[Any]", result: fts.SearchResult, query: str, theme: str
 ) -> None:
@@ -457,11 +362,15 @@ def _open_html_in_background(
     threading.Thread(target=job, daemon=True).start()
 
 
-class SearchScreen(Screen[None]):
-    """Search box + live result table over the whole archive or one project."""
+class SearchScreen(ModalScreen[None]):
+    """Search box + live result table over the whole archive or one project.
+
+    Modal so the list's single-letter keys (archive, delete, …) are off
+    while the results have focus: Textual stops the binding chain there.
+    """
 
     CSS = """
-    SearchScreen { layout: vertical; }
+    SearchScreen { layout: vertical; background: $background; }
     #search-title {
         height: 1;
         padding: 0 1;
@@ -730,24 +639,26 @@ class SearchScreen(Screen[None]):
         # (selecting a project exits the selector!), so ours must not bubble.
         event.stop()
         result = self._selected()
-        if result is None or self.db_path is None:
+        if result is None or not result.session_id:
             return
-        if result.type == TITLE_HIT_TYPE:
-            # A session, not a message: open it, as Enter does in the list.
-            _open_html_in_background(self, result, "", self.html_theme)
-            return
-        try:
-            fields = load_message_fields(self.db_path, result.message_id)
-        except sqlite3.Error as e:
-            self.notify(f"Could not read the message: {e}", severity="error")
-            return
+        # Read it in the TUI, as Enter does in the session list. A message
+        # hit opens at that message with the query found; `o` still opens
+        # the browser.
+        is_message = result.type != TITLE_HIT_TYPE
+        name = result.snippet if not is_message else ""
         _app_of(self).push_screen(
-            MessageDetailScreen(
-                result,
-                fields,
-                _terms(self._query),
-                self._query,
-                self.html_theme,
+            ConversationScreen(
+                Path(result.project_path),
+                result.session_id,
+                title=format_session_title(
+                    name or f"Session {result.session_id[:8]}",
+                    None if is_message else result.timestamp,
+                    project_label(result.project_path),
+                ),
+                # prepare_search() just refreshed every project's cache.
+                refresh=False,
+                target_uuid=result.message_uuid if is_message else None,
+                find=self._query if is_message else "",
             )
         )
 
