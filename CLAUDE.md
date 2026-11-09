@@ -23,6 +23,11 @@ This repo is **session-lens**, a fork of
   is upstream's. Update the top section with user-facing changes.
 - The user's pipx install is editable from this folder (see README,
   Install).
+- Version: upstream's release plus a fork number (`1.7.0+lens.1`). Keep
+  upstream's number as the base: `CacheManager._is_cache_version_compatible`
+  compares it against upstream's breaking versions, and any version change
+  re-renders every HTML page. Bump the fork number after a change to what
+  the pages show; then `uv lock`.
 
 ## Project Overview
 

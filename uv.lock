@@ -1428,7 +1428,7 @@ wheels = [
 
 [[package]]
 name = "session-lens"
-version = "1.7.0"
+version = "1.7.0+lens.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

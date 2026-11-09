@@ -101,6 +101,12 @@ the folder, run `pipx install --force --editable .` again in its new place
 The import package keeps upstream's name, `claude_code_log`, so merges from
 upstream stay simple.
 
+Versions are upstream's release plus a fork number, e.g. `1.7.0+lens.1`:
+session-lens built on upstream 1.7.0, its first release. The cache's
+compatibility rules and the HTML pages' freshness are keyed on upstream's
+numbers, so the base stays upstream's; a new version re-renders the HTML
+pages, and its fork number restarts at 1 when the base moves on.
+
 ---
 
 # Claude Code Log (upstream documentation)
