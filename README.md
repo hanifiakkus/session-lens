@@ -1,4 +1,122 @@
-# Claude Code Log
+# session-lens
+
+**Browse and search your full Claude Code history, including everything before compaction.**
+
+Claude Code keeps every message in `~/.claude/projects/**/*.jsonl`, but once a
+conversation is compacted the UI only shows the summary. session-lens reads those
+transcripts directly, so nothing is lost: a terminal UI with full-text search
+across every project, plus a local HTML archive.
+
+A lens on your sessions: it reads the transcripts where they are, and browsing
+or searching them never changes anything.
+
+session-lens is a fork of [daaain/claude-code-log](https://github.com/daaain/claude-code-log)
+(MIT). All of upstream's features are kept; the documentation below the line
+is upstream's and applies as-is (use `session-lens` in place of `claude-code-log`).
+
+## What session-lens adds
+
+- **`session-lens` (or the short `slens`) opens the TUI** — no flags
+  needed — on **every project's sessions at once**, newest first, wherever
+  you start it. `Esc` goes to the project selector: its first row,
+  **★ ALL projects**, comes back to all of them; any other row opens that
+  one project (where archive/delete/restore live). In a session list,
+  `Enter` reads the session in the TUI (see below), `h` opens its HTML page
+  and `c` resumes it in Claude Code. Every other subcommand and flag works
+  as upstream (`session-lens serve`, `session-lens --open-browser`,
+  `session-lens --tui` for upstream's per-directory start, …).
+- **Search bar in the TUI** — one line under the project and session
+  lists' header. Press `Ctrl+F` (or `/`), or click it, and type: results
+  appear as you type, with the matches highlighted. `Ctrl+F` on the results
+  takes you back to the box.
+  - By default it searches **session names** (the title the list shows),
+    newest first.
+  - `Ctrl+R` switches to **message content**: full-text search over every
+    message, ranked by relevance.
+  - `Enter` reads the result's session in the TUI; a message result opens
+    at that message with your words already found. `o` opens the session's
+    HTML page in the browser instead, scrolled to the message.
+  - Each result shows its session's size: message count, tokens and the
+    transcript's size on disk.
+  - `Ctrl+T` switches between the current project and all projects.
+  - The first search brings the cache up to date (and, for message content,
+    builds the search index); after that it only reads what changed.
+- **Read a session the way Claude Code shows it** — `Enter` on a session
+  (or on a search result) opens it full screen as Claude Code's chat screen
+  draws it: your prompts behind `❯`, Claude's replies behind `●`, each tool
+  call as `● Bash(…)` with its result under `⎿` cut to a few lines, and
+  thinking as `✻ Thinking…`, in Claude Code's own (dark theme) colours on
+  your terminal's background. Everything compaction hid is there too,
+  behind `✻ Compacted`, closed until you click it.
+  - Click a long result, a thinking block or a compaction summary to open
+    it; `Ctrl+O` opens or closes them all. Claude Code keeps the text of
+    only some thinking; one without it says so when opened.
+  - As in Claude Code, the prompt that started what is on screen is pinned
+    on the top line once it scrolls out of sight (its first paragraph, on
+    one line); scrolling past it pins the one before. It shows only while
+    you scroll up, so reading on downwards keeps the line, and never at
+    the bottom of the conversation. Click it to go to the prompt.
+  - Runs of reads and searches fold into one line, as in Claude Code:
+    `● Searched for 2 patterns, read 3 files`. Click it to see the calls.
+  - Away from the bottom, a `Jump to bottom (End) ↓` button sits at the
+    foot of the screen, as in Claude Code; click it or press `End`.
+  - Headings, lists, inline code and tables are drawn as Claude Code draws
+    them, tables with every border and their cells wrapped to fit.
+  - `Ctrl+F` finds text in the conversation, inside folded blocks too, and
+    counts the matches (`3/12`): `Enter` or `↓` for the next match, `↑` for
+    the previous one. A search result opens at its message
+    with the search already run.
+  - `Esc` closes the find box, then the conversation. `h` still opens the
+    session's HTML page.
+  - Long sessions open at once: the end (or the message you opened) is
+    drawn first, the rest in the background.
+- **Every compaction found** — newer Claude Code versions put a notice
+  before some compaction summaries, and those were taken for (very long)
+  prompts. They are recognised as compactions again, in the TUI and in
+  the HTML pages.
+- **Remembered theme** — pick a theme with `Ctrl+P` → *Change theme*; it is
+  saved to `~/.config/session-lens/tui-theme` (a theme saved under the
+  project's earlier names, session-rewind and cclens, is still read).
+- **Minimal HTML theme by default** (override with `--theme classic` or
+  `CLAUDE_CODE_LOG_THEME`).
+
+## Install
+
+```bash
+pipx install git+https://github.com/hanifiakkus/session-lens
+session-lens
+```
+
+Everything runs locally: no telemetry, and `serve` listens on `127.0.0.1` only.
+
+To work on it, install your clone in editable mode, so your changes apply
+at once:
+
+```bash
+git clone https://github.com/hanifiakkus/session-lens
+cd session-lens
+uv sync                    # the development environment (.venv)
+pipx install --editable .  # the session-lens / slens commands
+just ci                    # before committing
+```
+
+An editable install points at the clone's folder. If you move or rename
+the folder, run `pipx install --force --editable .` again in its new place
+(and `rm -rf .venv && uv sync`); otherwise the commands fail with
+`ModuleNotFoundError: No module named 'claude_code_log'`.
+
+The import package keeps upstream's name, `claude_code_log`, so merges from
+upstream stay simple.
+
+Versions are upstream's release plus a fork number, e.g. `1.7.0+lens.1`:
+session-lens built on upstream 1.7.0, its first release. The cache's
+compatibility rules and the HTML pages' freshness are keyed on upstream's
+numbers, so the base stays upstream's; a new version re-renders the HTML
+pages, and its fork number restarts at 1 when the base moves on.
+
+---
+
+# Claude Code Log (upstream documentation)
 
 A Python CLI tool that converts Claude Code transcript JSONL files into readable HTML and Markdown (plus JSON for tooling).
 

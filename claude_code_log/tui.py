@@ -9,6 +9,7 @@ from typing import Any, ClassVar, List, Optional, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
+from textual.coordinate import Coordinate
 from textual.containers import Container, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -36,6 +37,15 @@ from .converter import (
     load_directory_transcripts,
 )
 from .renderer import get_renderer
+from .session_lens import (
+    ALL_PROJECTS,
+    ALL_PROJECTS_LABEL,
+    default_projects_dir,
+    load_theme,
+    save_theme,
+)
+from .tui_search import SearchBar, focus_search_bar
+from .tui_viewer import ConversationScreen
 from .utils import DEFAULT_THEME, normalize_theme
 from .utils import atomic_write_text, get_project_display_name
 
@@ -55,7 +65,7 @@ class ProjectSelector(App[Path]):
     }
     """
 
-    TITLE = "Claude Code Log - Project Selector"
+    TITLE = "session-lens - Projects"
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
         Binding("escape", "quit", "Quit", show=False),
@@ -63,6 +73,8 @@ class ProjectSelector(App[Path]):
         Binding("a", "archive_project", "Archive Project"),
         Binding("d", "delete_project", "Delete Project"),
         Binding("r", "restore_project", "Restore Project"),
+        Binding("ctrl+f", "focus_search", "Search"),  # session-lens
+        Binding("slash", "focus_search", "Search", show=False),  # session-lens
     ]
 
     selected_project_path: reactive[Optional[Path]] = reactive(
@@ -72,18 +84,33 @@ class ProjectSelector(App[Path]):
     matching_projects: list[Path]
     archived_projects: set[Path]
 
+    # -- session-lens -----------------------------------------------------------
+
+    def watch_theme(self, theme: str) -> None:
+        save_theme(theme)
+
+    def action_focus_search(self) -> None:
+        focus_search_bar(self)
+
+    def _search_projects_dir(self) -> Path:
+        active = [p for p in self.projects if p not in self.archived_projects]
+        return active[0].parent if active else default_projects_dir()
+
     def __init__(
         self,
         projects: list[Path],
         matching_projects: list[Path],
         archived_projects: Optional[set[Path]] = None,
+        include_all: bool = False,
     ):
         """Initialize the project selector."""
         super().__init__()
-        self.theme = "gruvbox"
+        self.theme = load_theme(self)  # session-lens: remembered theme
         self.projects = projects
         self.matching_projects = matching_projects
         self.archived_projects = archived_projects or set()
+        # session-lens: a first row that selects every project at once.
+        self.include_all = include_all
 
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
@@ -99,6 +126,8 @@ class ProjectSelector(App[Path]):
                             f", {len(self.matching_projects)} match current directory"
                         )
                     yield Label(info_text, id="info")
+
+                yield SearchBar(self._search_projects_dir())  # session-lens
 
                 # Project table
                 yield DataTable[str](id="projects-table", cursor_type="row")
@@ -121,6 +150,11 @@ class ProjectSelector(App[Path]):
         # Add columns
         table.add_column("Project", width=max(20, self.size.width - 13))
         table.add_column("Sessions", width=10)
+
+        # session-lens: the "all projects" row; its count is filled below.
+        total_sessions = 0
+        if self.include_all:
+            table.add_row(ALL_PROJECTS_LABEL, "")
 
         # Add rows
         for project_path in self.projects:
@@ -162,6 +196,7 @@ class ProjectSelector(App[Path]):
                     project_display,
                     str(session_count),
                 )
+                total_sessions += session_count  # session-lens
             except Exception:
                 # If we can't read cache, show basic info
                 project_display = f"  {project_path.name}"
@@ -174,6 +209,9 @@ class ProjectSelector(App[Path]):
                     project_display,
                     "Unknown",
                 )
+
+        if self.include_all:  # session-lens
+            table.update_cell_at(Coordinate(0, 1), str(total_sessions))
 
     def on_data_table_row_highlighted(self, _event: DataTable.RowHighlighted) -> None:
         """Handle row highlighting (cursor movement) in the projects table."""
@@ -191,6 +229,9 @@ class ProjectSelector(App[Path]):
             if row_data:
                 # Extract project display from the first column
                 project_display = str(row_data[0]).strip()
+                if project_display == ALL_PROJECTS_LABEL.strip():  # session-lens
+                    self.selected_project_path = ALL_PROJECTS
+                    return
 
                 # Remove the arrow indicator if present
                 if project_display.startswith("→"):
@@ -264,6 +305,9 @@ class ProjectSelector(App[Path]):
         if not self.selected_project_path:
             self.notify("No project selected", severity="warning")
             return
+        if self.selected_project_path == ALL_PROJECTS:  # session-lens
+            self.notify("Pick a single project to archive", severity="warning")
+            return
 
         if self._is_project_archived(self.selected_project_path):
             self.notify("Project is already archived", severity="warning")
@@ -327,6 +371,9 @@ class ProjectSelector(App[Path]):
         """Delete the selected project from cache (and optionally JSONL files)."""
         if not self.selected_project_path:
             self.notify("No project selected", severity="warning")
+            return
+        if self.selected_project_path == ALL_PROJECTS:  # session-lens
+            self.notify("Pick a single project to delete", severity="warning")
             return
 
         is_archived = self._is_project_archived(self.selected_project_path)
@@ -392,6 +439,9 @@ class ProjectSelector(App[Path]):
         """Restore all archived sessions in the selected project."""
         if not self.selected_project_path:
             self.notify("No project selected", severity="warning")
+            return
+        if self.selected_project_path == ALL_PROJECTS:  # session-lens
+            self.notify("Pick a single project to restore", severity="warning")
             return
 
         if not self._is_project_archived(self.selected_project_path):
@@ -1262,11 +1312,12 @@ class SessionBrowser(App[Optional[str]]):
     }
     """
 
-    TITLE = "Claude Code Log - Session Browser"
+    TITLE = "session-lens - Sessions"
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
         Binding("escape", "back_to_projects", "Back", show=False),
-        Binding("enter", "export_selected", "Open HTML", show=False),
+        # session-lens: Enter reads the session in the TUI; h opens HTML.
+        Binding("enter", "view_session", "View"),
         Binding("a", "archive_session", "Archive Session"),
         Binding("h", "export_selected", "Open HTML page"),
         Binding("m", "export_markdown", "Open Markdown"),
@@ -1281,6 +1332,8 @@ class SessionBrowser(App[Optional[str]]):
         Binding("e", "toggle_expanded", "Toggle Expanded View"),
         Binding("p", "back_to_projects", "Open Project Selector"),
         Binding("?", "toggle_help", "Help"),
+        Binding("ctrl+f", "focus_search", "Search"),  # session-lens
+        Binding("slash", "focus_search", "Search", show=False),  # session-lens
     ]
 
     selected_session_id: reactive[Optional[str]] = reactive(cast(Optional[str], None))
@@ -1289,6 +1342,14 @@ class SessionBrowser(App[Optional[str]]):
     cache_manager: CacheManager
     sessions: dict[str, SessionCacheData]
     archived_sessions: dict[str, SessionCacheData]
+
+    # -- session-lens -----------------------------------------------------------
+
+    def watch_theme(self, theme: str) -> None:
+        save_theme(theme)
+
+    def action_focus_search(self) -> None:
+        focus_search_bar(self)
 
     def __init__(
         self,
@@ -1302,7 +1363,7 @@ class SessionBrowser(App[Optional[str]]):
         confused with ``self.theme``, Textual's own UI theme.
         """
         super().__init__()
-        self.theme = "gruvbox"
+        self.theme = load_theme(self)  # session-lens: remembered theme
         self.html_theme = normalize_theme(html_theme)
         self.project_path = project_path.resolve()
         self.is_archived_project = is_archived
@@ -1319,6 +1380,10 @@ class SessionBrowser(App[Optional[str]]):
                 # Project statistics
                 with Container(id="stats-container"):
                     yield Label("Loading project information...", id="stats")
+
+                yield SearchBar(  # session-lens
+                    self.project_path.parent, self.project_path, self.html_theme
+                )
 
                 # Session table
                 yield DataTable[str](id="sessions-table", cursor_type="row")
@@ -1614,6 +1679,29 @@ class SessionBrowser(App[Optional[str]]):
                 return dt.strftime("%Y-%m-%d %H:%M")
         except (ValueError, AttributeError):
             return "Unknown"
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on a session reads it in the TUI (session-lens)."""
+        table = cast(DataTable[str], event.data_table)  # pyright: ignore[reportUnknownMemberType]
+        if table.id == "sessions-table":
+            self._update_selected_session_from_cursor()
+            self.action_view_session()
+
+    def action_view_session(self) -> None:
+        """Open the selected session full screen, drawn like Claude Code."""
+        session_id = self.selected_session_id
+        if not session_id:
+            self.notify("No session selected", severity="warning")
+            return
+        archived = self.is_archived_project or session_id in self.archived_sessions
+        self.push_screen(
+            ConversationScreen(
+                self.project_path,
+                session_id,
+                self.cache_manager,
+                refresh=not archived,
+            )
+        )
 
     def on_data_table_row_highlighted(self, _event: DataTable.RowHighlighted) -> None:
         """Handle row highlighting (cursor movement) in the sessions table."""
@@ -2135,13 +2223,16 @@ def run_project_selector(
     projects: list[Path],
     matching_projects: list[Path],
     archived_projects: Optional[set[Path]] = None,
+    include_all: bool = False,
 ) -> Optional[Path]:
     """Run the project selector TUI and return the selected project path."""
     if not projects:
         print("Error: No projects provided")
         return None
 
-    app = ProjectSelector(projects, matching_projects, archived_projects)
+    app = ProjectSelector(
+        projects, matching_projects, archived_projects, include_all=include_all
+    )
     try:
         return app.run()
     except KeyboardInterrupt:

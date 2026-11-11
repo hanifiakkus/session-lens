@@ -127,6 +127,24 @@ def pytest_ignore_collect(collection_path: Path, config: "Config") -> Optional[b
 # enabling parallel test execution without database conflicts.
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_tui_theme_file(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[None, None, None]:
+    """Keep the TUI's remembered theme out of the developer's ~/.config.
+
+    Every TUI app saves its theme when it starts (session-lens), so
+    without this the test run overwrites the theme the user picked.
+    """
+    import claude_code_log.session_lens as session_lens
+
+    theme_dir = tmp_path_factory.mktemp("tui-theme")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(session_lens, "THEME_FILE", theme_dir / "tui-theme")
+        mp.setattr(session_lens, "LEGACY_THEME_FILES", (theme_dir / "legacy",))
+        yield
+
+
 @pytest.fixture
 def isolated_cache_dir(tmp_path: Path) -> Path:
     """Create an isolated project directory with explicit db_path.

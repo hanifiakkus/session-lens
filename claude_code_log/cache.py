@@ -320,7 +320,12 @@ def get_library_version() -> str:
     try:
         from importlib.metadata import version as get_version
 
-        return get_version("claude-code-log")
+        # session-lens ships the same package under its own distribution name.
+        for dist in ("session-lens", "claude-code-log"):
+            try:
+                return get_version(dist)
+            except Exception:
+                continue
     except Exception:
         # Package not installed or other error, continue to file-based detection
         pass
