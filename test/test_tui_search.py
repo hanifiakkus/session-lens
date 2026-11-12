@@ -4,9 +4,12 @@ import contextlib
 import sqlite3
 import tempfile
 from pathlib import Path
+from typing import cast
 from unittest.mock import Mock, patch
 
 import pytest
+from rich.text import Text
+from textual.widgets import DataTable
 
 from claude_code_log.cache import SessionCacheData
 from claude_code_log.tui import SessionBrowser
@@ -251,6 +254,55 @@ class TestResumeFromResults:
                 execvp.assert_called_once_with(
                     "claude", ["claude", "-r", "session-123"]
                 )
+
+
+class TestContentResultsNameTheSession:
+    @pytest.mark.asyncio
+    async def test_message_hits_show_the_session_name_not_the_project(
+        self, project_dir: Path
+    ):
+        from claude_code_log.search import SearchResult
+        from claude_code_log.tui_search import SessionStats
+
+        app = _browser(project_dir)
+        with patch(
+            "claude_code_log.tui_search.prepare_search",
+            side_effect=PrepareError("test"),
+        ):
+            async with app.run_test(size=(160, 30)) as pilot:
+                await pilot.pause(0.1)
+                await pilot.press("ctrl+f", "d")
+                await pilot.pause(0.2)
+                screen = app.screen
+                assert isinstance(screen, SearchScreen)
+                result = SearchResult(
+                    message_id=1,
+                    project_path="/p/-home-me-projects-cc-parser",
+                    project_slug="-home-me-projects-cc-parser",
+                    field="text",
+                    link="",
+                    session_id="s1",
+                    message_uuid="u1",
+                    type="assistant",
+                    timestamp="2026-11-12T10:00:00Z",
+                    snippet="the c key",
+                )
+                screen.results = [result]
+                screen.stats = {
+                    "s1": SessionStats(name="Arama sırasında 'c' ile devam")
+                }
+                table = cast(
+                    "DataTable[Text | str]", screen.query_one("#search-results")
+                )
+
+                def second_column() -> tuple[str, str]:
+                    column = table.ordered_columns[1]
+                    return str(column.label), str(table.get_row_at(0)[1])
+
+                screen._fill_rows(full_text=True)  # pyright: ignore[reportPrivateUsage]
+                assert second_column() == ("Session", "Arama sırasında 'c' ile devam")
+                screen._fill_rows(full_text=False)  # pyright: ignore[reportPrivateUsage]
+                assert second_column()[0] == "Project"
 
 
 class TestRememberedTheme:

@@ -38,7 +38,8 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
     HTML page in the browser instead, scrolled to the message, and `c`
     resumes the session in Claude Code, from the directory it ran in.
   - Each result shows its session's size: message count, tokens and the
-    transcript's size on disk.
+    transcript's size on disk. A message content result also shows its
+    session's name, in place of the project.
   - `Ctrl+T` switches between the current project and all projects.
   - The first search brings the cache up to date (and, for message content,
     builds the search index); after that it only reads what changed.

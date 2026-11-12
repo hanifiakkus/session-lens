@@ -372,6 +372,8 @@ class SessionStats:
     size: Optional[int] = None
     #: Directory the session ran in, for resuming it in Claude Code.
     cwd: str = ""
+    #: The session's name, as the session list shows it.
+    name: str = ""
 
 
 def session_stats(
@@ -387,16 +389,18 @@ def session_stats(
         for start in range(0, len(ids), 500):  # under SQLite's parameter cap
             chunk = ids[start : start + 500]
             marks = ",".join("?" * len(chunk))
-            for sid, messages, tin, tout, cwd in conn.execute(
+            for row in conn.execute(
                 "SELECT session_id, message_count, total_input_tokens,"
-                " total_output_tokens, cwd"
+                " total_output_tokens, cwd, ai_title, summary, first_user_message"
                 f" FROM sessions WHERE session_id IN ({marks})",
                 chunk,
             ):
+                sid, messages, tin, tout, cwd, ai_title, summary, prompt = row
                 stats[sid] = SessionStats(
                     messages=int(messages or 0),
                     tokens=int(tin or 0) + int(tout or 0),
                     cwd=cwd or "",
+                    name=session_name(ai_title, summary, prompt),
                 )
     finally:
         conn.close()
@@ -613,8 +617,10 @@ class SearchScreen(ModalScreen[None]):
         search_input.cursor_position = len(self._query)
         self._prepare()
 
-    #: Fixed columns: date, project, type. The match column gets the rest.
-    _FIXED_COLUMNS = (
+    #: Fixed columns; the match column gets the rest. A name hit's match is
+    #: the session's name, so its row names the project; a message hit's
+    #: match is a line of the transcript, so its row names the session.
+    _NAME_COLUMNS = (
         ("Date", 16),
         ("Project", 22),
         ("Type", 8),
@@ -622,17 +628,28 @@ class SearchScreen(ModalScreen[None]):
         ("Tokens", 7),
         ("Size", 8),
     )
+    _CONTENT_COLUMNS = (
+        ("Date", 16),
+        ("Session", 32),
+        ("Type", 8),
+        ("Msgs", 6),
+        ("Tokens", 7),
+        ("Size", 8),
+    )
+
+    def _fixed_columns(self) -> tuple[tuple[str, int], ...]:
+        return self._CONTENT_COLUMNS if self._shown_full_text else self._NAME_COLUMNS
 
     def _match_width(self) -> int:
         # Each column carries one cell of padding per side; leave room for
         # the vertical scrollbar so a long result list never scrolls sideways.
-        fixed = sum(w + 2 for _, w in self._FIXED_COLUMNS)
+        fixed = sum(w + 2 for _, w in self._fixed_columns())
         return max(20, self.size.width - fixed - 2 - 2)
 
     def _add_columns(self) -> None:
         table = cast("DataTable[Text | str]", self.query_one(DataTable))
         table.clear(columns=True)
-        for label, width in self._FIXED_COLUMNS:
+        for label, width in self._fixed_columns():
             table.add_column(label, width=width)
         table.add_column("Match", width=self._match_width())
 
@@ -778,7 +795,9 @@ class SearchScreen(ModalScreen[None]):
             )
 
     def _fill_rows(self, full_text: bool) -> None:
-        self._shown_full_text = full_text
+        if full_text != self._shown_full_text:
+            self._shown_full_text = full_text
+            self._add_columns()
         terms = _terms(self._query) if full_text else title_terms(self._query)
         mark = highlighted if full_text else highlighted_folded
         width = self._match_width()
@@ -788,9 +807,14 @@ class SearchScreen(ModalScreen[None]):
             match = mark(r.snippet, terms)
             match.truncate(width, overflow="ellipsis")
             st = self.stats.get(r.session_id or "")
+            if full_text:
+                second = Text(st.name if st else "", no_wrap=True)
+                second.truncate(self._CONTENT_COLUMNS[1][1], overflow="ellipsis")
+            else:
+                second = Text(project_label(r.project_path), no_wrap=True)
             table.add_row(
                 format_timestamp(r.timestamp),
-                project_label(r.project_path),
+                second,
                 r.type,
                 Text(str(st.messages) if st else "-", justify="right"),
                 Text(format_count(st.tokens) if st else "-", justify="right"),
