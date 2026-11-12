@@ -35,7 +35,8 @@ is upstream's and applies as-is (use `session-lens` in place of `claude-code-log
     message, ranked by relevance.
   - `Enter` reads the result's session in the TUI; a message result opens
     at that message with your words already found. `o` opens the session's
-    HTML page in the browser instead, scrolled to the message.
+    HTML page in the browser instead, scrolled to the message, and `c`
+    resumes the session in Claude Code, from the directory it ran in.
   - Each result shows its session's size: message count, tokens and the
     transcript's size on disk.
   - `Ctrl+T` switches between the current project and all projects.

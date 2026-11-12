@@ -10,6 +10,7 @@ current, runs queries off the UI thread and shows the hits.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass
 import threading
@@ -369,6 +370,8 @@ class SessionStats:
     tokens: int = 0
     #: Bytes of the session's transcript file; None when it is gone.
     size: Optional[int] = None
+    #: Directory the session ran in, for resuming it in Claude Code.
+    cwd: str = ""
 
 
 def session_stats(
@@ -384,13 +387,16 @@ def session_stats(
         for start in range(0, len(ids), 500):  # under SQLite's parameter cap
             chunk = ids[start : start + 500]
             marks = ",".join("?" * len(chunk))
-            for sid, messages, tin, tout in conn.execute(
+            for sid, messages, tin, tout, cwd in conn.execute(
                 "SELECT session_id, message_count, total_input_tokens,"
-                f" total_output_tokens FROM sessions WHERE session_id IN ({marks})",
+                " total_output_tokens, cwd"
+                f" FROM sessions WHERE session_id IN ({marks})",
                 chunk,
             ):
                 stats[sid] = SessionStats(
-                    messages=int(messages or 0), tokens=int(tin or 0) + int(tout or 0)
+                    messages=int(messages or 0),
+                    tokens=int(tin or 0) + int(tout or 0),
+                    cwd=cwd or "",
                 )
     finally:
         conn.close()
@@ -480,6 +486,26 @@ def all_sessions(db_path: Path) -> list[SessionRow]:
     ]
 
 
+def resume_in_claude(app: App[Any], session_id: str, cwd: str = "") -> None:
+    """Replace this process with ``claude -r``, from the session's directory."""
+    if cwd:
+        target = Path(cwd)
+        if target.is_dir():
+            os.chdir(target)
+        else:
+            app.notify(f"Session directory not found: {cwd}", severity="warning")
+    try:
+        with app.suspend():
+            os.execvp("claude", ["claude", "-r", session_id])
+    except FileNotFoundError:
+        app.notify(
+            "Claude Code CLI not found. Make sure 'claude' is in your PATH.",
+            severity="error",
+        )
+    except Exception as e:  # noqa: BLE001 - surfaced to the user
+        app.notify(f"Error resuming session: {e}", severity="error")
+
+
 def _open_html_in_background(
     screen: "Screen[Any]", result: fts.SearchResult, query: str, theme: str
 ) -> None:
@@ -532,6 +558,7 @@ class SearchScreen(ModalScreen[None]):
         Binding("ctrl+f", "focus_input", "Search box", show=False, priority=True),
         Binding("ctrl+t", "toggle_scope", "Project/all"),
         Binding("o", "open_html", "Open in browser"),
+        Binding("c", "resume_selected", "Resume in Claude Code"),
         Binding("slash", "focus_input", "Back to search", show=False),
     ]
 
@@ -746,7 +773,8 @@ class SearchScreen(ModalScreen[None]):
             more = "+" if len(results) >= RESULT_LIMIT else ""
             self._status(
                 f"{len(results)}{more} results  ·  Enter: read"
-                "  ·  o: open in browser  ·  Ctrl+F: back to search"
+                "  ·  o: open in browser  ·  c: resume in Claude Code"
+                "  ·  Ctrl+F: back to search"
             )
 
     def _fill_rows(self, full_text: bool) -> None:
@@ -817,6 +845,16 @@ class SearchScreen(ModalScreen[None]):
             self.notify("Select a result first", severity="warning")
             return
         _open_html_in_background(self, result, self._query, self.html_theme)
+
+    def action_resume_selected(self) -> None:
+        if isinstance(self.focused, Input):
+            return
+        result = self._selected()
+        if result is None or not result.session_id:
+            self.notify("Select a result first", severity="warning")
+            return
+        st = self.stats.get(result.session_id)
+        resume_in_claude(_app_of(self), result.session_id, st.cwd if st else "")
 
     def action_toggle_mode(self) -> None:
         self.full_text = not self.full_text

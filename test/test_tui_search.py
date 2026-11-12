@@ -1,5 +1,6 @@
 """Tests for the TUI search (session-lens): the bar, its layout, name search."""
 
+import contextlib
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -211,6 +212,45 @@ class TestSearchBarLayout:
                 await pilot.pause()
                 assert screen.query_one("#search-input").has_focus
                 assert not screen.full_text  # ctrl+f no longer switches mode
+
+
+class TestResumeFromResults:
+    @pytest.mark.asyncio
+    async def test_c_on_a_result_resumes_it_in_its_directory(self, project_dir: Path):
+        from claude_code_log.search import SearchResult
+        from claude_code_log.tui_search import SessionStats
+
+        app = _browser(project_dir)
+        with (
+            patch(
+                "claude_code_log.tui_search.prepare_search",
+                side_effect=PrepareError("test"),
+            ),
+            patch("claude_code_log.tui_search.os.execvp") as execvp,
+            patch("claude_code_log.tui_search.os.chdir") as chdir,
+            # Headless test apps cannot suspend.
+            patch.object(type(app), "suspend", contextlib.nullcontext, create=False),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause(0.1)
+                await pilot.press("ctrl+f", "d")
+                await pilot.pause(0.2)
+                screen = app.screen
+                assert isinstance(screen, SearchScreen)
+                result = Mock(spec=SearchResult)
+                result.session_id = "session-123"
+                screen.results = [result]
+                screen.stats = {"session-123": SessionStats(cwd=str(project_dir))}
+                table = screen.query_one("#search-results")
+                table.add_row(*["x"] * 7)  # type: ignore[attr-defined]
+                table.focus()
+                await pilot.pause()
+                await pilot.press("c")
+                await pilot.pause()
+                chdir.assert_called_once_with(project_dir)
+                execvp.assert_called_once_with(
+                    "claude", ["claude", "-r", "session-123"]
+                )
 
 
 class TestRememberedTheme:

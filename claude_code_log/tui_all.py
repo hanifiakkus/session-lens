@@ -12,7 +12,6 @@ project's files and cache.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar, Optional, cast
@@ -31,6 +30,7 @@ from .tui_search import (
     focus_search_bar,
     open_session_page,
     project_label,
+    resume_in_claude,
 )
 from .tui_viewer import ConversationScreen
 from .utils import DEFAULT_THEME, normalize_theme
@@ -202,24 +202,7 @@ class AllSessionsBrowser(App[Optional[str]]):
         if row is None:
             self.notify("No session selected", severity="warning")
             return
-        if row.cwd:
-            target = Path(row.cwd)
-            if target.is_dir():
-                os.chdir(target)
-            else:
-                self.notify(
-                    f"Session directory not found: {row.cwd}", severity="warning"
-                )
-        try:
-            with self.suspend():
-                os.execvp("claude", ["claude", "-r", row.session_id])
-        except FileNotFoundError:
-            self.notify(
-                "Claude Code CLI not found. Make sure 'claude' is in your PATH.",
-                severity="error",
-            )
-        except Exception as e:  # noqa: BLE001 - surfaced to the user
-            self.notify(f"Error resuming session: {e}", severity="error")
+        resume_in_claude(self, row.session_id, row.cwd)
 
     def action_back_to_projects(self) -> None:
         self.exit(BACK_TO_PROJECTS)
